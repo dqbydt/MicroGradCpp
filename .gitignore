@@ -1,0 +1,33 @@
+# Build directories and artifacts
+build/
+Debug/
+Release/
+*.o
+*.obj
+moc_*.cpp
+qrc_*.cpp
+ui_*.h
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Qt Creator specific files
+*.user
+CMakeLists.txt.user
+
+# CMake specific files
+CMakeCache.txt
+CMakeFiles/
+
+# Log files
+*.log
+
+# Operating system specific files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Temporary editor files
+*~
+
