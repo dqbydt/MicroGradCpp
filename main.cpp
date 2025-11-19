@@ -11,5 +11,6 @@ int main()
     Value d = a*b+c;
 
     std::cout << d << std::endl;
+    d._prev();
     return 0;
 }
