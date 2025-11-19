@@ -13,7 +13,8 @@ using _vtsp = std::tuple<std::shared_ptr<_Value>, std::shared_ptr<_Value>>;
 // Shadow version of Value that backs automatic stack vars on the heap
 struct _Value {
 
-    double data;
+    double data = 0.0;
+    std::string op = "";
 
     // Set of parents maintained as a set of shared_ptrs. This is
     // because in an expr like d = a*b + c, the temporary a*b gets
@@ -24,13 +25,13 @@ struct _Value {
 
     _Value(double d) : data{d} {}   // _prev default-init'd to empty set
 
-    _Value(double d, const _vtsp& parents) : data{d} {
+    _Value(double d, const _vtsp& parents, std::string&& op) : data{d}, op{std::move(op)} {
         auto const& [p1, p2] = parents;
         _prev = {p1, p2}; // Copies SPs, increases ref count of both
     }
 
     ~_Value() {
-        std::cout << std::format("_Value({:.3f}) dtor\n", data);
+        std::cout << std::format("_Value({:.3f}, \"{}\") dtor\n", data, op);
     }
 
 };
@@ -43,20 +44,23 @@ private:
     std::shared_ptr<_Value> _spv;
 
 public:
-    // MUST be initialized in initializer list! And therefore the _Val
-    // ptr must also be init'd in the init list.
+    // Ref members MUST be initialized in initializer list! And therefore
+    // the _Val ptr must also be init'd in the init list, before these
+    // ref members!
     double& data;
+    std::string& op;
 
     // For Values constructed by themselves (e.g. Value a{2.0}),
     // the _spv->_prev must be an empty set.
-    Value(double d) : _spv {std::make_shared<_Value>(d)}, data {_spv->data} {}
+    Value(double d) : _spv {std::make_shared<_Value>(d)}, data {_spv->data}, op {_spv->op} {}
 
     // For Values constructed in operations, the _Value tuple will
     // always be passed as an rvalue, from a std::make_tuple in an operator
-    Value(double d, _vtsp&& parents) :
-        _spv {std::make_shared<_Value>(d, parents)},
-        data {_spv->data} {
-    }
+    Value(double d, _vtsp&& parents, std::string&& op) :
+        _spv {std::make_shared<_Value>(d, parents, std::move(op))},
+        data {_spv->data},
+        op {_spv->op}
+    { }
 
     ~Value() {
         std::cout << std::format("Value({:.3f}) dtor\n", data);
@@ -83,11 +87,11 @@ public:
     // 6. Temp tuple from #1 is destroyed, decrementing ref counts.
     // Net effect is that the ref counts on the parent SPs are incremented by 1.
     Value operator+(const Value& other) {
-        return Value{data + other.data, std::make_tuple(_spv, other._spv)};
+        return Value{data + other.data, std::make_tuple(_spv, other._spv), "+"};
     }
 
     Value operator*(const Value& other) {
-        return Value{data * other.data, std::make_tuple(_spv, other._spv)};
+        return Value{data * other.data, std::make_tuple(_spv, other._spv), "*"};
     }
 
     // 0. Missing ref in range-for with non trivial type warning?
