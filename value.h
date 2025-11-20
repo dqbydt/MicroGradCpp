@@ -14,6 +14,7 @@ using _vtsp = std::tuple<std::shared_ptr<_Value>, std::shared_ptr<_Value>>;
 struct _Value {
 
     double data         = 0.0;
+    double grad         = 0.0;
     std::string op      = "";
     std::string label   = "";
 
@@ -48,6 +49,7 @@ private:
     explicit Value(std::shared_ptr<_Value> sp)
         : _spv(std::move(sp)),
         data(_spv->data),
+        grad(_spv->grad),
         op(_spv->op),
         label(_spv->label)
     {}
@@ -57,6 +59,7 @@ public:
     // the _Val ptr must also be init'd in the init list, before these
     // ref members!
     double&         data;
+    double&         grad;
     std::string&    op;
     std::string&    label;
 
@@ -80,7 +83,7 @@ public:
 
     // operator<< overload for printing
     friend std::ostream& operator<<(std::ostream& os, const Value& v) {
-        os << std::format("Value(data={:.3f}, label=\"{}\")", v.data, v.label);
+        os << std::format("Value(data={:.3f}, grad={:.3f}, label=\"{}\")", v.data, v.grad, v.label);
         return os;
     }
 
