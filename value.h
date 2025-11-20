@@ -96,18 +96,18 @@ public:
         return Value{data * other.data, std::make_tuple(_spv, other._spv), "*"};
     }
 
-    // 0. Missing ref in range-for with non trivial type warning?
-    // 1. Why doesn't the std::format work?
-    // 2. Rewrite as a view that yields the next elt from the set?
+    // Print parents
     void _prev() const {
         // If we iterate like so: for (auto p : _spv->_prev) then
         // p gets a copy of each element in the set -- which means we are
         // creating a new SP and incrementing the refcount needlessly.
         // Instead iterate with a const ref to the SP.
-        //for (auto p : _spv->_prev) {
         for (const auto& p : _spv->_prev) {
-            //std::cout << std::format("Value(data={.3f})", p->data);
-            std::cout << p->data << std::endl;
+            // The following doesn't work bc std::format is consteval, can be called
+            // only from non-const fns. Will be fixed in C++26.
+            //std::cout << std::format("Parent: Value(data={.3f})", p->data);
+            // Workaround for now: (needs arg index 0:, note!)
+            std::cout << std::vformat("Parent: Value(data={0:.3f})\n", std::make_format_args(p->data));
         }
     }
 
