@@ -15,6 +15,7 @@ struct _Value {
 
     double data = 0.0;
     std::string op = "";
+    std::string label = "";
 
     // Set of parents maintained as a set of shared_ptrs. This is
     // because in an expr like d = a*b + c, the temporary a*b gets
@@ -25,13 +26,15 @@ struct _Value {
 
     _Value(double d) : data{d} {}   // _prev default-init'd to empty set
 
+    _Value(double d, std::string&& label) : data{d}, label{std::move(label)} {}
+
     _Value(double d, _vtsp&& parents, std::string&& op) : data{d}, op{std::move(op)} {
         auto [p1, p2] = std::move(parents); // p1 and p2 move-ctor'd from the SPs in the tuple
         _prev = {std::move(p1), std::move(p2)}; // shared_ptrs moved all the way from the temp
     }
 
     ~_Value() {
-        std::cout << std::format("_Value({:.3f}, \"{}\") dtor\n", data, op);
+        std::cout << std::format("_Value({:.3f}, \"{}\") dtor\n", data, label);
     }
 
 };
@@ -49,21 +52,35 @@ public:
     // ref members!
     double& data;
     std::string& op;
+    std::string& label;
 
     // For Values constructed by themselves (e.g. Value a{2.0}),
     // the _spv->_prev must be an empty set.
-    Value(double d) : _spv {std::make_shared<_Value>(d)}, data {_spv->data}, op {_spv->op} {}
+    Value(double d) :
+        _spv {std::make_shared<_Value>(d)},
+        data {_spv->data},
+        op {_spv->op},
+        label {_spv->label}
+    {}
+
+    Value(double d, std::string label) :
+        _spv {std::make_shared<_Value>(d, std::move(label))},
+        data {_spv->data},
+        op {_spv->op},
+        label {_spv->label}
+    {}
 
     // For Values constructed in operations, the _Value tuple will
     // always be passed as an rvalue, from a std::make_tuple in an operator
     Value(double d, _vtsp&& parents, std::string&& op) :
         _spv {std::make_shared<_Value>(d, std::move(parents), std::move(op))},
         data {_spv->data},
-        op {_spv->op}
+        op {_spv->op},
+        label {_spv->label}
     { }
 
     ~Value() {
-        std::cout << std::format("Value({:.3f}) dtor\n", data);
+        std::cout << std::format("Value({:.3f}, \"{}\") dtor\n", data, label);
     }
 
     // operator<< overload for printing
@@ -72,7 +89,7 @@ public:
         // the string. Colon introduces format specifiers.
         // v.data is the arg whose value will be inserted into the ph in
         // the format string
-        os << std::format("Value(data={:.3f})", v.data);
+        os << std::format("Value(data={:.3f}, label=\"{}\")", v.data, v.label);
         return os;
     }
 

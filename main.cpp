@@ -4,13 +4,16 @@
 
 int main()
 {
-    Value a{2.0};
-    Value b{-3.0};
-    Value c{10.0};
+    Value a{2.0, "a"};
+    Value b{-3.0, "b"};
+    Value c{10.0, "c"};
 
-    Value d = a*b+c;
+    Value e = a*b; e.label = 'e';
+    Value d = e+c; d.label = 'd';
+    Value f{-2.0, "f"};
+    Value L = d*f; L.label = 'L';  // this is the final output of the graph
 
-    std::cout << d << std::endl;
-    d._prev();
+    std::cout << L << std::endl;
+    L._prev();
     return 0;
 }
