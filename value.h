@@ -25,9 +25,9 @@ struct _Value {
 
     _Value(double d) : data{d} {}   // _prev default-init'd to empty set
 
-    _Value(double d, const _vtsp& parents, std::string&& op) : data{d}, op{std::move(op)} {
-        auto const& [p1, p2] = parents;
-        _prev = {p1, p2}; // Copies SPs, increases ref count of both
+    _Value(double d, _vtsp&& parents, std::string&& op) : data{d}, op{std::move(op)} {
+        auto [p1, p2] = std::move(parents); // p1 and p2 move-ctor'd from the SPs in the tuple
+        _prev = {std::move(p1), std::move(p2)}; // shared_ptrs moved all the way from the temp
     }
 
     ~_Value() {
@@ -57,7 +57,7 @@ public:
     // For Values constructed in operations, the _Value tuple will
     // always be passed as an rvalue, from a std::make_tuple in an operator
     Value(double d, _vtsp&& parents, std::string&& op) :
-        _spv {std::make_shared<_Value>(d, parents, std::move(op))},
+        _spv {std::make_shared<_Value>(d, std::move(parents), std::move(op))},
         data {_spv->data},
         op {_spv->op}
     { }
@@ -80,11 +80,13 @@ public:
     // --------------
     // 1. the std::make_tuple makes a copy of the SPs, incrementing their ref cnts
     // 2. The temp tuple is received as an rval ref in the Value ctor, no copies
-    // 3. Value ctor invokes _Value ctor that takes the tuple by const ref. No copies.
-    // 4. In the _Value ctor the tuple is unpacked into const refs. No copies.
-    // 5. Finally the const refs are added to the set, which copies the SPs and
-    //    increments ref counts.
-    // 6. Temp tuple from #1 is destroyed, decrementing ref counts.
+    // 3. Value ctor invokes _Value ctor that moves the sp's out from the tuple.
+    //    Ref cnt stays the same. SPs in the tuple are now nullptrs.
+    // 4. In the _Value ctor the tuple is unpacked into rval refs. No copies..
+    // 5. Finally the rval refs are moved to the set. The only ref cnt increment
+    //    is the one from #1 above.
+    // 6. Temp tuple from #1 is destroyed. Moved-from SPs getting destroyed does
+    //    nothing.
     // Net effect is that the ref counts on the parent SPs are incremented by 1.
     Value operator+(const Value& other) {
         return Value{data + other.data, std::make_tuple(_spv, other._spv), "+"};
