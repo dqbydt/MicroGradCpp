@@ -37,44 +37,32 @@ struct _Value {
 };
 
 class Value {
-    // Member vars are initialized in the order they are declared.
-    // The shadow ptr must be declared before the data ref so that
-    // the _Value ctor runs before we try to init data.
 private:
     std::shared_ptr<_Value> _spv;
 
-    // Private ctor for common init of data ref members.
-    // This takes just the SP to the _Value obj and
-    // inits the ref data members
-    explicit Value(std::shared_ptr<_Value> sp)
-        : _spv(std::move(sp)),
-        data(_spv->data),
-        grad(_spv->grad),
-        op(_spv->op),
-        label(_spv->label)
-    {}
-
 public:
-    // Ref members MUST be initialized in initializer list! And therefore
-    // the _Val ptr must also be init'd in the init list, before these
-    // ref members!
-    double&         data;
-    double&         grad;
-    std::string&    op;
-    std::string&    label;
+    // These were previously ref members initialized to the
+    // corresponding members of the backing object. Have had
+    // to abandon that approach since it breaks in move-assignment:
+    // the underlying _spv is changed, but refs continue to refer
+    // to old, deallocated _spv!
+    double&         data()  const   { return _spv->data;    }
+    double&         grad()  const   { return _spv->grad;    }
+    std::string&    op()    const   { return _spv->op;      }
+    std::string&    label() const   { return _spv->label;   }
 
     // For Values constructed by themselves (e.g. Value a{2.0}),
     // the _spv->_prev must be an empty set.
-    Value(double d) : Value(std::make_shared<_Value>(d)) {}
+    Value(double d) : _spv{std::make_shared<_Value>(d)} {}
 
     Value(double d, std::string label) :
-        Value (std::make_shared<_Value>(d, std::move(label)))
+        _spv {std::make_shared<_Value>(d, std::move(label))}
     {}
 
     // For Values constructed in operations, the _Value tuple will
     // always be passed as an rvalue, from a std::make_tuple in an operator
     Value(double d, _vtsp&& parents, std::string&& op) :
-        Value (std::make_shared<_Value>(d, std::move(parents), std::move(op)))
+        _spv {std::make_shared<_Value>(d, std::move(parents), std::move(op))}
     {}
 
     // Prevent copy - otherwise would corrupt expr graph
@@ -82,34 +70,33 @@ public:
     Value& operator=(const Value&) = delete;
 
     // Moves allowed, to enable reassigment of a node to a new value
-    // MC ok; new obj being created, so problems about reseating
     Value(Value&&) noexcept = default;
+    Value& operator=(Value&& other) noexcept = default;
 
-    // Default MAO cannot be used; ref members would get reseated.
-    // So, must define one ourselves:
-    Value& operator=(Value&& other) noexcept {
-        std::cout << std::format("MAO for old label {}, old data {}\n", label, data); std::cout.flush();
-        _spv = std::move(other._spv);
-        std::cout << std::format("MAO new label {}, new data {}\n", label, data); std::cout.flush();
-        return *this;
-    }
-
+    // Getters valid only if dying object has not been moved from! Else
+    // the _spv is a nullptr!
     ~Value() {
-        std::cout << std::format("Value({:.3f}, \"{}\") dtor\n", data, label);
+        if (_spv) {
+            std::cout << std::format("Value({:.3f}, \"{}\") dtor\n", data(), label());
+        } else {
+            std::cout << std::format("Moved-from-Value dtor\n");
+        }
+        std::cout.flush();
+
     }
 
     // operator<< overload for printing
     friend std::ostream& operator<<(std::ostream& os, const Value& v) {
-        os << std::format("Value(data={:.3f}, grad={:.3f}, label=\"{}\")", v.data, v.grad, v.label);
+        os << std::format("Value(data={:.3f}, grad={:.3f}, label=\"{}\")", v.data(), v.grad(), v.label());
         return os;
     }
 
     Value operator+(const Value& other) {
-        return Value{data + other.data, std::make_tuple(_spv, other._spv), "+"};
+        return Value{data() + other.data(), std::make_tuple(_spv, other._spv), "+"};
     }
 
     Value operator*(const Value& other) {
-        return Value{data * other.data, std::make_tuple(_spv, other._spv), "*"};
+        return Value{data() * other.data(), std::make_tuple(_spv, other._spv), "*"};
     }
 
     // Print parents
