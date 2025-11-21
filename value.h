@@ -77,6 +77,23 @@ public:
         Value (std::make_shared<_Value>(d, std::move(parents), std::move(op)))
     {}
 
+    // Prevent copy - otherwise would corrupt expr graph
+    Value(const Value&) = delete;
+    Value& operator=(const Value&) = delete;
+
+    // Moves allowed, to enable reassigment of a node to a new value
+    // MC ok; new obj being created, so problems about reseating
+    Value(Value&&) noexcept = default;
+
+    // Default MAO cannot be used; ref members would get reseated.
+    // So, must define one ourselves:
+    Value& operator=(Value&& other) noexcept {
+        std::cout << std::format("MAO for old label {}, old data {}\n", label, data); std::cout.flush();
+        _spv = std::move(other._spv);
+        std::cout << std::format("MAO new label {}, new data {}\n", label, data); std::cout.flush();
+        return *this;
+    }
+
     ~Value() {
         std::cout << std::format("Value({:.3f}, \"{}\") dtor\n", data, label);
     }
