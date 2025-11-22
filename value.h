@@ -6,6 +6,7 @@
 #include <set>
 #include <memory>
 #include <tuple>
+#include <cmath>
 
 struct _Value;
 using _vtsp = std::tuple<std::shared_ptr<_Value>, std::shared_ptr<_Value>>;
@@ -82,12 +83,11 @@ public:
             std::cout << std::format("Moved-from-Value dtor\n");
         }
         std::cout.flush();
-
     }
 
     // operator<< overload for printing
     friend std::ostream& operator<<(std::ostream& os, const Value& v) {
-        os << std::format("Value(data={:.3f}, grad={:.3f}, label=\"{}\")", v.data(), v.grad(), v.label());
+        os << std::format("Value(data={:.3f}, grad={:.3f}, label=\"{}\")\n", v.data(), v.grad(), v.label());
         return os;
     }
 
@@ -97,6 +97,15 @@ public:
 
     Value operator*(const Value& other) {
         return Value{data() * other.data(), std::make_tuple(_spv, other._spv), "*"};
+    }
+
+    // tanh squashing fn for output of neuron
+    Value tanh() {
+        auto x = data();
+        auto th = (std::exp(2*x) - 1)/(std::exp(2*x) + 1);
+        // Need to repeat parent twice because ctor needs _vtsp which is a
+        // tuple of two _Value SPs
+        return Value{th, std::make_tuple(_spv, _spv), "tanh"};
     }
 
     // Print parents

@@ -5,29 +5,53 @@
 
 int main()
 {
-    Value a{2.0, "a1"};
-    Value b{-3.0, "b"};
-    Value c{10.0, "c"};
+    // inputs x1, x2
+    Value x1{2.0, "x1"};
+    Value x2{0.0, "x2"};
 
-    Value e = a*b; e.label() = "e1";
-    Value d = e+c; d.label() = "d1";
-    Value f{-2.0, "f"};
-    Value L = d*f; L.label() = 'L';  // this is the final output of the graph
-    auto L1 = L.data();
+    // Weights w1, w2
+    Value w1{-3.0, "w1"};
+    Value w2{1.0, "w2"};
 
-    double h = 0.001;   // nudge
+    // Bias
+    // Strange value selected to ensure gradients come out well-formed
+    Value b{6.8813735, "b"};
 
-    a = Value{2.0 + h, "a2"}; // uncomment to test ∂L/∂a
-    // Re-evaluate all nodes
-    e = a*b; e.label() = "e2";
-    d = e+c; d.label() = "d2";  // d.data() += h; // uncomment to test ∂L/∂d
-    // f.data() += h;   // uncomment to test ∂L/∂f
-    L = d*f; L.label() = "L2";
-    auto L2 = L.data();
+    // Intermediate nodes
+    Value x1w1 = x1 * w1; x1w1.label() = "x1w1";
+    Value x2w2 = x2 * w2; x2w2.label() = "x2w2";
 
-    auto grad = (L2-L1)/h;
+    // x1*w1 + x2*w2 + b
+    Value x1w1x2w2 = x1w1 + x2w2; x1w1x2w2.label() = "x1w1 + x2w2";
+    // n is the raw cell body activation w/o the activation fn applied
+    Value n = x1w1x2w2 + b; n.label() = 'n';
 
-    std::cout << std::format("L1 = {:.6f}, L2 = {:.6f}, grad = {:.6f}\n", L1, L2, grad);
+    // Final output of the neuron
+    Value L = n.tanh(); L.label() = 'L';
+    L.grad() = 1.0;
+
+    // Next, backprop through the tanh. Since L = tanh(n), we seek ∂L/∂n.
+    // From calculus, this is (1 - tanh(n)**2). And tanh(n) is just L. So
+    // ∂L/∂n = 1 - L**2 = 1 - (0.7071)**2 = 0.5
+    n.grad() = 0.5;
+
+    // Manual backprop: L.grad = 1.0. n.grad = 0.5 as shown just above
+    // + node before n just distributes gradients, so
+    x1w1x2w2.grad() = 0.5;
+    b.grad() = 0.5;
+    // Likewise for the two nodes before x1w1x2w2:
+    x1w1.grad() = 0.5;
+    x2w2.grad() = 0.5;
+
+    // Now we are back at the leaf nodes. Since these are * nodes, the
+    // gradient scaling is the other term.
+    x2.grad() = w2.data() * x2w2.grad();
+    w2.grad() = x2.data() * x2w2.grad();
+    x1.grad() = w1.data() * x1w1.grad();
+    w1.grad() = x1.data() * x1w1.grad();
+
+    std::cout << L << n << b << x1w1x2w2 << x1w1 << x2w2 << x1 << w1 << x2 << w2;
     std::cout.flush();
+
     return 0;
 }
