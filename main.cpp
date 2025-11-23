@@ -52,6 +52,7 @@ int main()
 
     std::cout << L << n << b << x1w1x2w2 << x1w1 << x2w2 << x1 << w1 << x2 << w2;
     std::cout.flush();
+    L._prev();
 
     return 0;
 }

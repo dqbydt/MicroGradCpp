@@ -7,6 +7,7 @@
 #include <memory>
 #include <tuple>
 #include <cmath>
+#include <functional>
 
 struct _Value;
 using _vtsp = std::tuple<std::shared_ptr<_Value>, std::shared_ptr<_Value>>;
@@ -18,6 +19,12 @@ struct _Value {
     double grad         = 0.0;
     std::string op      = "";
     std::string label   = "";
+
+    // Empty lambda by default (e.g. for a leaf node, there is nothing
+    // to backprop. But in Value::add() for e.g. we are adding this and
+    // other. We want to propagate the incoming gradient from out to this
+    // and other.
+    std::function<void()> _backward = [](){};
 
     // Set of parents of this node
     std::set<std::shared_ptr<_Value>> _prev;
@@ -32,7 +39,7 @@ struct _Value {
     }
 
     ~_Value() {
-        std::cout << std::format("_Value({:.3f}, \"{}\") dtor\n", data, label);
+        //std::cout << std::format("_Value({:.3f}, \"{}\") dtor\n", data, label);
     }
 
 };
@@ -47,10 +54,11 @@ public:
     // to abandon that approach since it breaks in move-assignment:
     // the underlying _spv is changed, but refs continue to refer
     // to old, deallocated _spv!
-    double&         data()  const   { return _spv->data;    }
-    double&         grad()  const   { return _spv->grad;    }
-    std::string&    op()    const   { return _spv->op;      }
-    std::string&    label() const   { return _spv->label;   }
+    double&         data()      const   { return _spv->data;    }
+    double&         grad()      const   { return _spv->grad;    }
+    std::string&    op()        const   { return _spv->op;      }
+    std::string&    label()     const   { return _spv->label;   }
+    auto            backward()  const   { return _spv->_backward; }
 
     // For Values constructed by themselves (e.g. Value a{2.0}),
     // the _spv->_prev must be an empty set.
@@ -78,7 +86,7 @@ public:
     // the _spv is a nullptr!
     ~Value() {
         if (_spv) {
-            std::cout << std::format("Value({:.3f}, \"{}\") dtor\n", data(), label());
+            //std::cout << std::format("Value({:.3f}, \"{}\") dtor\n", data(), label());
         } else {
             std::cout << std::format("Moved-from-Value dtor\n");
         }
@@ -91,8 +99,17 @@ public:
         return os;
     }
 
+    // Direct translation of Python code. THIS IS WRONG! In an expression like
+    // a*b + c, the "this" value capture becomes invalid at the end of the statement!
+    // Must instead capture SPs to backing _Value objects that live on the heap!
     Value operator+(const Value& other) {
-        return Value{data() + other.data(), std::make_tuple(_spv, other._spv), "+"};
+        auto out = Value{data() + other.data(), std::make_tuple(_spv, other._spv), "+"};
+        auto _backward = [&,this](){    // Capture everything by ref, except "this" is by value
+            this->grad() = 1.0 * out.grad();
+            other.grad() = 1.0 * out.grad();
+        };
+        out.backward() = _backward;
+        return out;
     }
 
     Value operator*(const Value& other) {
@@ -103,8 +120,9 @@ public:
     Value tanh() {
         auto x = data();
         auto th = (std::exp(2*x) - 1)/(std::exp(2*x) + 1);
-        // Need to repeat parent twice because ctor needs _vtsp which is a
-        // tuple of two _Value SPs
+        // Need to repeat parent twice because Value ctor needs _vtsp which
+        // is a tuple of two _Value SPs. Because the SPs are inserted into a set,
+        // the repetition is benign.
         return Value{th, std::make_tuple(_spv, _spv), "tanh"};
     }
 
