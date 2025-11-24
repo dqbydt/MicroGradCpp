@@ -22,8 +22,8 @@ struct _Value {
 
     // Empty lambda by default (e.g. for a leaf node, there is nothing
     // to backprop. But in Value::add() for e.g. we are adding this and
-    // other. We want to propagate the incoming gradient from out to this
-    // and other.
+    // other. We want to propagate the incoming gradient from "out" to
+    // "this" and "other".
     std::function<void()> _backward = [](){};
 
     // Set of parents of this node
@@ -48,17 +48,22 @@ class Value {
 private:
     std::shared_ptr<_Value> _spv;
 
+    // Only used internally to set the backward lambda during expression buildup
+    // NOTE: return type must be auto&, not auto! Otherwise it returns a copy,
+    // not the actual stored lambda! So setting it to a specifc fn does nothing;
+    // the _spv._backward member isn't changed.
+    auto& _backward() const { return _spv->_backward; }
+
 public:
     // These were previously ref members initialized to the
     // corresponding members of the backing object. Have had
     // to abandon that approach since it breaks in move-assignment:
     // the underlying _spv is changed, but refs continue to refer
     // to old, deallocated _spv!
-    double&         data()      const   { return _spv->data;    }
-    double&         grad()      const   { return _spv->grad;    }
-    std::string&    op()        const   { return _spv->op;      }
-    std::string&    label()     const   { return _spv->label;   }
-    auto            backward()  const   { return _spv->_backward; }
+    double&         data()  const   { return _spv->data;    }
+    double&         grad()  const   { return _spv->grad;    }
+    std::string&    op()    const   { return _spv->op;      }
+    std::string&    label() const   { return _spv->label;   }
 
     // For Values constructed by themselves (e.g. Value a{2.0}),
     // the _spv->_prev must be an empty set.
@@ -93,27 +98,41 @@ public:
         std::cout.flush();
     }
 
+    // Actually calls the _backward lambda that was set up below during the
+    // expression build.
+    void backward() { _spv->_backward(); }
+
     // operator<< overload for printing
     friend std::ostream& operator<<(std::ostream& os, const Value& v) {
         os << std::format("Value(data={:.3f}, grad={:.3f}, label=\"{}\")\n", v.data(), v.grad(), v.label());
         return os;
     }
 
-    // Direct translation of Python code. THIS IS WRONG! In an expression like
-    // a*b + c, the "this" value capture becomes invalid at the end of the statement!
-    // Must instead capture SPs to backing _Value objects that live on the heap!
     Value operator+(const Value& other) {
         auto out = Value{data() + other.data(), std::make_tuple(_spv, other._spv), "+"};
-        auto _backward = [&,this](){    // Capture everything by ref, except "this" is by value
-            this->grad() = 1.0 * out.grad();
-            other.grad() = 1.0 * out.grad();
+
+        // Note: must capture SPs to backing _Value objects that live on the heap!
+        // Anything else would result in dangling ptrs/refs!
+        out._backward() = [_p1 = _spv,
+                          _p2 = other._spv,
+                          _out = out._spv](){
+            _p1->grad = 1.0 * _out->grad;
+            _p2->grad = 1.0 * _out->grad;
         };
-        out.backward() = _backward;
         return out;
     }
 
     Value operator*(const Value& other) {
-        return Value{data() * other.data(), std::make_tuple(_spv, other._spv), "*"};
+        auto out = Value{data() * other.data(), std::make_tuple(_spv, other._spv), "*"};
+        out._backward() = [_p1 = _spv,
+                          _p2 = other._spv,
+                          _out = out._spv](){
+            // grad on one side = other side data * incoming grad
+            _p1->grad = _p2->data * _out->grad;
+            _p2->grad = _p1->data * _out->grad;
+        };
+
+        return out;
     }
 
     // tanh squashing fn for output of neuron
@@ -123,7 +142,21 @@ public:
         // Need to repeat parent twice because Value ctor needs _vtsp which
         // is a tuple of two _Value SPs. Because the SPs are inserted into a set,
         // the repetition is benign.
-        return Value{th, std::make_tuple(_spv, _spv), "tanh"};
+        auto out = Value{th, std::make_tuple(_spv, _spv), "tanh"};
+        // If L = tanh(n), then ∂L/∂n = (1 - tanh(n)**2)
+        std::cout << std::format("Settup up bw() lambda on tanh node\n");
+        out._backward() = [_p1 = _spv, th,
+                          _out = out._spv](){
+            _p1->grad = (1 - th*th) * _out->grad;
+            std::cout << std::format("Called bw() on tanh node, new grad = {:.3f}\n", _p1->grad);
+        };
+        // Test it
+        std::cout << std::format("Testing calling bw() lambda on tanh node\n");
+        // All of the following work:
+        //std::invoke(out._spv->_backward);
+        //out._spv->_backward();
+        out._backward()();
+        return out;
     }
 
     // Print parents

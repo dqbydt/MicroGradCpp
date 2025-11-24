@@ -30,29 +30,18 @@ int main()
     Value L = n.tanh(); L.label() = 'L';
     L.grad() = 1.0;
 
-    // Next, backprop through the tanh. Since L = tanh(n), we seek ∂L/∂n.
-    // From calculus, this is (1 - tanh(n)**2). And tanh(n) is just L. So
-    // ∂L/∂n = 1 - L**2 = 1 - (0.7071)**2 = 0.5
-    n.grad() = 0.5;
-
-    // Manual backprop: L.grad = 1.0. n.grad = 0.5 as shown just above
-    // + node before n just distributes gradients, so
-    x1w1x2w2.grad() = 0.5;
-    b.grad() = 0.5;
-    // Likewise for the two nodes before x1w1x2w2:
-    x1w1.grad() = 0.5;
-    x2w2.grad() = 0.5;
-
-    // Now we are back at the leaf nodes. Since these are * nodes, the
-    // gradient scaling is the other term.
-    x2.grad() = w2.data() * x2w2.grad();
-    w2.grad() = x2.data() * x2w2.grad();
-    x1.grad() = w1.data() * x1w1.grad();
-    w1.grad() = x1.data() * x1w1.grad();
+    // Next, traverse the tree and call backward() starting from the
+    // output node. Each backward() call on a node propagates the gradient
+    // backwards to its parents, depending on how it was generated from
+    // those parents.
+    L.backward();
+    n.backward();
+    x1w1x2w2.backward();
+    x1w1.backward();
+    x2w2.backward();
 
     std::cout << L << n << b << x1w1x2w2 << x1w1 << x2w2 << x1 << w1 << x2 << w2;
     std::cout.flush();
-    L._prev();
 
     return 0;
 }
