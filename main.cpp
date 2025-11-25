@@ -30,10 +30,7 @@ int main()
     Value L = n.tanh(); L.label() = 'L';
     L.grad() = 1.0;
 
-    // Next, traverse the tree and call backward() starting from the
-    // output node. Each backward() call on a node propagates the gradient
-    // backwards to its parents, depending on how it was generated from
-    // those parents.
+    // Perform the backward pass
     L.backward();
 
     std::cout << L << n << b << x1w1x2w2 << x1w1 << x2w2 << x1 << w1 << x2 << w2;

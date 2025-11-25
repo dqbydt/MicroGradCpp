@@ -3,7 +3,6 @@
 
 #include <iostream>
 #include <format>
-#include <mutex>
 #include <set>
 #include <vector>
 #include <memory>
@@ -23,6 +22,12 @@ struct _Value {
     std::string label   = "";
 
     bool visited = false;
+    // Caches the topo sort order the first time backward() is run on this node.
+    // Subsequent backward() passes don't need to run the same sort over and over.
+    // Note, we use raw ptrs since we strictly just want to access the _Value
+    // nodes without impacting the ownership (and incurring the atomic refcount
+    // inc/dec).
+    std::vector<const _Value*> topo_cache;
 
     // Empty lambda by default (e.g. for a leaf node, there is nothing
     // to backprop. But in Value::add() for e.g. we are adding this and
@@ -57,21 +62,6 @@ private:
     // not the actual stored lambda! So setting it to a specifc fn does nothing;
     // the _spv._backward member isn't changed.
     auto& _backward()   const { return _spv->_backward; }   // Lambda to backprop grads
-
-    // We strictly just want to access the _Value nodes without
-    // impacting the ownership (and incurring the atomic refcount inc/dec).
-    // So we use raw pointers here.
-    static inline std::once_flag btof{}; // for build_topo
-    static inline std::vector<_Value*> topo;
-
-    void build_topo(_Value* _pv) const {
-        if (_pv->visited) return;
-        _pv->visited = true;
-        for (const auto& spp : _pv->_prev) {
-            build_topo(spp.get());
-        }
-        Value::topo.push_back(_pv);
-    }
 
 public:
     // These were previously ref members initialized to the
@@ -122,16 +112,49 @@ public:
     // expression build.
     void backward() {
 
-        // Call once per graph, only on the output node
-        std::call_once(Value::btof, [this](){ Value::topo.clear(); build_topo(_spv.get());} );
+        // Alias names for semantic convenience
+        auto* root = _spv.get();
+        auto& topo_cache = root->topo_cache;
 
-        std::cout << "Topo sorted graph:\n";
-        for (auto& _pv : Value::topo) {
-            std::cout << std::format("_Value(data={:.3f}, grad={:.3f}, label=\"{}\")\n",
-                                     _pv->data, _pv->grad, _pv->label);
+        // Build topo order if cache is empty
+        if (topo_cache.empty()) {
+            std::vector<_Value*> visited;   // Store visited nodes to reset flags later
+
+            // Note: auto return type does not work for recursive calls; need to
+            // fully specify the type of the lambda.
+            // auto build_topo = [&](_Value* _pv) -> void {
+            std::function<void(_Value*)> build_topo = [&](_Value* _pv) {
+                if (_pv->visited) return;
+
+                _pv->visited = true;
+                visited.push_back(_pv);
+
+                for (const auto& spp : _pv->_prev) {
+                    build_topo(spp.get());
+                }
+                topo_cache.push_back(_pv);
+            };
+
+            // Build topo graph starting at this node
+            build_topo(root);
+
+            std::cout << "Topo sorted graph:\n";
+            for (auto& _pv : topo_cache) {
+                std::cout << std::format("_Value(data={:.3f}, grad={:.3f}, label=\"{}\")\n",
+                                         _pv->data, _pv->grad, _pv->label);
+            }
+
+            // Reset visited nodes - this enables re-computation of topo sort on a diff node.
+            // Note special case "deduce-as-pointer" syntax in range-for loop!
+            for (auto* _pv : visited) _pv->visited = false;
         }
 
-        _spv->_backward();
+        // Do the backward pass on the topo-sorted list of nodes
+        grad() = 1.0;
+        for (auto it = topo_cache.rbegin(); it != topo_cache.rend(); it++) {
+            (*it)->_backward();
+        }
+
     }
 
     // operator<< overload for printing
@@ -145,20 +168,20 @@ public:
 
         // Note: must capture SPs to backing _Value objects that live on the heap!
         // Anything else would result in dangling ptrs/refs!
-        out._backward() = [_p1 = _spv,
-                          _p2 = other._spv,
-                          _out = out._spv](){
-            _p1->grad = 1.0 * _out->grad;
-            _p2->grad = 1.0 * _out->grad;
+        out._backward() = [ _p1  = _spv,
+                            _p2  = other._spv,
+                            _out = out._spv](){
+            _p1->grad = _out->grad;
+            _p2->grad = _out->grad;
         };
         return out;
     }
 
     Value operator*(const Value& other) {
         auto out = Value{data() * other.data(), std::make_tuple(_spv, other._spv), "*"};
-        out._backward() = [_p1 = _spv,
-                          _p2 = other._spv,
-                          _out = out._spv](){
+        out._backward() = [ _p1  = _spv,
+                            _p2  = other._spv,
+                            _out = out._spv](){
             // grad on one side = other side data * incoming grad
             _p1->grad = _p2->data * _out->grad;
             _p2->grad = _p1->data * _out->grad;
