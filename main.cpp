@@ -35,10 +35,6 @@ int main()
     // backwards to its parents, depending on how it was generated from
     // those parents.
     L.backward();
-    n.backward();
-    x1w1x2w2.backward();
-    x1w1.backward();
-    x2w2.backward();
 
     std::cout << L << n << b << x1w1x2w2 << x1w1 << x2w2 << x1 << w1 << x2 << w2;
     std::cout.flush();

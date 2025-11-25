@@ -3,7 +3,9 @@
 
 #include <iostream>
 #include <format>
+#include <mutex>
 #include <set>
+#include <vector>
 #include <memory>
 #include <tuple>
 #include <cmath>
@@ -19,6 +21,8 @@ struct _Value {
     double grad         = 0.0;
     std::string op      = "";
     std::string label   = "";
+
+    bool visited = false;
 
     // Empty lambda by default (e.g. for a leaf node, there is nothing
     // to backprop. But in Value::add() for e.g. we are adding this and
@@ -52,7 +56,22 @@ private:
     // NOTE: return type must be auto&, not auto! Otherwise it returns a copy,
     // not the actual stored lambda! So setting it to a specifc fn does nothing;
     // the _spv._backward member isn't changed.
-    auto& _backward() const { return _spv->_backward; }
+    auto& _backward()   const { return _spv->_backward; }   // Lambda to backprop grads
+
+    // We strictly just want to access the _Value nodes without
+    // impacting the ownership (and incurring the atomic refcount inc/dec).
+    // So we use raw pointers here.
+    static inline std::once_flag btof{}; // for build_topo
+    static inline std::vector<_Value*> topo;
+
+    void build_topo(_Value* _pv) const {
+        if (_pv->visited) return;
+        _pv->visited = true;
+        for (const auto& spp : _pv->_prev) {
+            build_topo(spp.get());
+        }
+        Value::topo.push_back(_pv);
+    }
 
 public:
     // These were previously ref members initialized to the
@@ -98,9 +117,22 @@ public:
         std::cout.flush();
     }
 
+
     // Actually calls the _backward lambda that was set up below during the
     // expression build.
-    void backward() { _spv->_backward(); }
+    void backward() {
+
+        // Call once per graph, only on the output node
+        std::call_once(Value::btof, [this](){ Value::topo.clear(); build_topo(_spv.get());} );
+
+        std::cout << "Topo sorted graph:\n";
+        for (auto& _pv : Value::topo) {
+            std::cout << std::format("_Value(data={:.3f}, grad={:.3f}, label=\"{}\")\n",
+                                     _pv->data, _pv->grad, _pv->label);
+        }
+
+        _spv->_backward();
+    }
 
     // operator<< overload for printing
     friend std::ostream& operator<<(std::ostream& os, const Value& v) {
@@ -144,20 +176,14 @@ public:
         // the repetition is benign.
         auto out = Value{th, std::make_tuple(_spv, _spv), "tanh"};
         // If L = tanh(n), then ∂L/∂n = (1 - tanh(n)**2)
-        std::cout << std::format("Settup up bw() lambda on tanh node\n");
         out._backward() = [_p1 = _spv, th,
                           _out = out._spv](){
             _p1->grad = (1 - th*th) * _out->grad;
-            std::cout << std::format("Called bw() on tanh node, new grad = {:.3f}\n", _p1->grad);
         };
-        // Test it
-        std::cout << std::format("Testing calling bw() lambda on tanh node\n");
-        // All of the following work:
-        //std::invoke(out._spv->_backward);
-        //out._spv->_backward();
-        out._backward()();
         return out;
     }
+
+
 
     // Print parents
     void _prev() const {
