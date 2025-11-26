@@ -171,8 +171,9 @@ public:
         out._backward() = [ _p1  = _spv,
                             _p2  = other._spv,
                             _out = out._spv](){
-            _p1->grad = _out->grad;
-            _p2->grad = _out->grad;
+            // Gradients must accumulate! For cases like b=a+a
+            _p1->grad += _out->grad;
+            _p2->grad += _out->grad;
         };
         return out;
     }
@@ -182,9 +183,11 @@ public:
         out._backward() = [ _p1  = _spv,
                             _p2  = other._spv,
                             _out = out._spv](){
-            // grad on one side = other side data * incoming grad
-            _p1->grad = _p2->data * _out->grad;
-            _p2->grad = _p1->data * _out->grad;
+            // Grad on one side = other side data * incoming grad
+            // Also, gradients must accumulate! In order to backprop from
+            // d = a*b; e = a+b
+            _p1->grad += _p2->data * _out->grad;
+            _p2->grad += _p1->data * _out->grad;
         };
 
         return out;
@@ -201,7 +204,7 @@ public:
         // If L = tanh(n), then ∂L/∂n = (1 - tanh(n)**2)
         out._backward() = [_p1 = _spv, th,
                           _out = out._spv](){
-            _p1->grad = (1 - th*th) * _out->grad;
+            _p1->grad += (1 - th*th) * _out->grad;
         };
         return out;
     }
