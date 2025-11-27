@@ -257,6 +257,16 @@ public:
         return out;
     }
 
+    Value relu() {
+        auto relu = (data() < 0.0)? 0.0 : data();
+        auto out = Value{relu, std::make_tuple(_spv, _spv), "ReLU"};
+        out._backward() = [_p1  = _spv, relu,
+                           _out = out._spv](){
+            _p1->grad += (relu > 0.0) * _out->grad;
+        };
+        return out;
+    }
+
     // Print parents
     void _prev() const {
         for (const auto& p : _spv->_prev) {
