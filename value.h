@@ -63,6 +63,9 @@ private:
     // the _spv._backward member isn't changed.
     auto& _backward()   const { return _spv->_backward; }   // Lambda to backprop grads
 
+    // Insert space before +ve vals for pretty-printing
+    static constexpr const char* sgnspc(double d) { return (d >= 0)? " ":""; };
+
 public:
     // These were previously ref members initialized to the
     // corresponding members of the backing object. Have had
@@ -140,12 +143,14 @@ public:
 
             std::cout << "Topo sorted graph:\n";
             for (auto& _pv : topo_cache) {
-                std::cout << std::format("_Value(data={:.3f}, grad={:.3f}, label=\"{}\")\n",
-                                         _pv->data, _pv->grad, _pv->label);
+                std::cout << std::format("_Value(data={}{:.3f}, grad={}{:.3f}, label=\"{}\")\n",
+                                         sgnspc(_pv->data), _pv->data,
+                                         sgnspc(_pv->grad), _pv->grad, _pv->label);
             }
+            std::cout << "------------------\n";
 
             // Reset visited nodes - this enables re-computation of topo sort on a diff node.
-            // Note special case "deduce-as-pointer" syntax in range-for loop!
+            // Note special case auto* "deduce-as-pointer" syntax in range-for loop!
             for (auto* _pv : visited) _pv->visited = false;
         }
 
@@ -159,11 +164,13 @@ public:
 
     // operator<< overload for printing
     friend std::ostream& operator<<(std::ostream& os, const Value& v) {
-        os << std::format("Value(data={:.3f}, grad={:.3f}, label=\"{}\")\n", v.data(), v.grad(), v.label());
+        auto d_sgnspc = v.sgnspc(v.data());   auto g_sgnspc = v.sgnspc(v.grad());
+        os << std::format("Value(data={}{:.3f}, grad={}{:.3f}, label=\"{}\")\n",
+                          d_sgnspc, v.data(), g_sgnspc, v.grad(), v.label());
         return os;
     }
 
-    Value operator+(const Value& other) {
+    Value operator+(const Value& other) const {
         auto out = Value{data() + other.data(), std::make_tuple(_spv, other._spv), "+"};
 
         // Note: must capture SPs to backing _Value objects that live on the heap!
@@ -178,7 +185,10 @@ public:
         return out;
     }
 
-    Value operator*(const Value& other) {
+    // For Value + constant
+    Value operator+(double other) const { return *this + Value{other}; }
+
+    Value operator*(const Value& other) const {
         auto out = Value{data() * other.data(), std::make_tuple(_spv, other._spv), "*"};
         out._backward() = [ _p1  = _spv,
                             _p2  = other._spv,
@@ -189,7 +199,45 @@ public:
             _p1->grad += _p2->data * _out->grad;
             _p2->grad += _p1->data * _out->grad;
         };
+        return out;
+    }
 
+    // For Value * constant
+    Value operator*(double d) const { return *this * Value{d}; }
+
+    // Unary -
+    Value operator-() const { return *this * -1.0; }
+    // Subtraction
+    Value operator-(const Value& other) const { return *this + (-other); }
+    // Value - constant
+    Value operator-(double d) const { return *this + (-d); }
+
+    // this^d
+    Value pow(double d) const {
+        auto x = data();
+        auto trd = std::pow(x, d);
+        auto out = Value{trd, std::make_tuple(_spv, _spv), std::format("**{:.3f}", d)};
+        // If L = a.pow(d), then ∂L/∂a = d*a.pow(d-1.0)
+        out._backward() = [_p1  = _spv, x, d,
+                           _out = out._spv](){
+            _p1->grad += d * std::pow(x, d-1.0) * _out->grad;
+        };
+        return out;
+    }
+
+    // Division
+    Value operator/(const Value& other) const { return *this * other.pow(-1); }
+
+    // exp(this)
+    Value exp() {
+        auto x = data();
+        auto e_x = std::exp(x);
+        auto out = Value{e_x, std::make_tuple(_spv, _spv), "exp"};
+        // If L = exp(a), then ∂L/∂a = exp(a)
+        out._backward() = [_p1  = _spv, e_x,
+                           _out = out._spv](){
+            _p1->grad += e_x * _out->grad;
+        };
         return out;
     }
 
@@ -202,14 +250,12 @@ public:
         // the repetition is benign.
         auto out = Value{th, std::make_tuple(_spv, _spv), "tanh"};
         // If L = tanh(n), then ∂L/∂n = (1 - tanh(n)**2)
-        out._backward() = [_p1 = _spv, th,
-                          _out = out._spv](){
+        out._backward() = [_p1  = _spv, th,
+                           _out = out._spv](){
             _p1->grad += (1 - th*th) * _out->grad;
         };
         return out;
     }
-
-
 
     // Print parents
     void _prev() const {
@@ -224,5 +270,10 @@ public:
 
 
 };
+
+// For constant +/* Value
+Value operator*(double d, const Value& v) { return v*d; }
+Value operator+(double d, const Value& v) { return v+d; }
+
 
 #endif // VALUE_H

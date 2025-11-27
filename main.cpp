@@ -27,7 +27,9 @@ int main()
     Value n = x1w1x2w2 + b; n.label() = 'n';
 
     // Final output of the neuron
-    Value L = n.tanh(); L.label() = 'L';
+    Value e = (2*n).exp(); e.label() = 'e';
+    Value L = (e-1)/(e+1); L.label() = 'L';
+    //Value L = n.tanh(); L.label() = 'L';
     L.grad() = 1.0;
 
     // Perform the backward pass
