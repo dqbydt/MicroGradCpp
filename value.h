@@ -175,9 +175,9 @@ public:
 
         // Note: must capture SPs to backing _Value objects that live on the heap!
         // Anything else would result in dangling ptrs/refs!
-        out._backward() = [ _p1  = _spv,
-                            _p2  = other._spv,
-                            _out = out._spv](){
+        out._backward() = [ _p1  = _spv.get(),
+                            _p2  = other._spv.get(),
+                            _out = out._spv.get()](){
             // Gradients must accumulate! For cases like b=a+a
             _p1->grad += _out->grad;
             _p2->grad += _out->grad;
@@ -190,9 +190,9 @@ public:
 
     Value operator*(const Value& other) const {
         auto out = Value{data() * other.data(), std::make_tuple(_spv, other._spv), "*"};
-        out._backward() = [ _p1  = _spv,
-                            _p2  = other._spv,
-                            _out = out._spv](){
+        out._backward() = [ _p1  = _spv.get(),
+                            _p2  = other._spv.get(),
+                            _out = out._spv.get()](){
             // Grad on one side = other side data * incoming grad
             // Also, gradients must accumulate! In order to backprop from
             // d = a*b; e = a+b
@@ -218,8 +218,8 @@ public:
         auto trd = std::pow(x, d);
         auto out = Value{trd, std::make_tuple(_spv, _spv), std::format("**{:.3f}", d)};
         // If L = a.pow(d), then ∂L/∂a = d*a.pow(d-1.0)
-        out._backward() = [_p1  = _spv, x, d,
-                           _out = out._spv](){
+        out._backward() = [_p1  = _spv.get(), x, d,
+                           _out = out._spv.get()](){
             _p1->grad += d * std::pow(x, d-1.0) * _out->grad;
         };
         return out;
@@ -234,8 +234,8 @@ public:
         auto e_x = std::exp(x);
         auto out = Value{e_x, std::make_tuple(_spv, _spv), "exp"};
         // If L = exp(a), then ∂L/∂a = exp(a)
-        out._backward() = [_p1  = _spv, e_x,
-                           _out = out._spv](){
+        out._backward() = [_p1  = _spv.get(), e_x,
+                           _out = out._spv.get()](){
             _p1->grad += e_x * _out->grad;
         };
         return out;
@@ -250,8 +250,8 @@ public:
         // the repetition is benign.
         auto out = Value{th, std::make_tuple(_spv, _spv), "tanh"};
         // If L = tanh(n), then ∂L/∂n = (1 - tanh(n)**2)
-        out._backward() = [_p1  = _spv, th,
-                           _out = out._spv](){
+        out._backward() = [_p1  = _spv.get(), th,
+                           _out = out._spv.get()](){
             _p1->grad += (1 - th*th) * _out->grad;
         };
         return out;
@@ -260,8 +260,8 @@ public:
     Value relu() {
         auto relu = (data() < 0.0)? 0.0 : data();
         auto out = Value{relu, std::make_tuple(_spv, _spv), "ReLU"};
-        out._backward() = [_p1  = _spv, relu,
-                           _out = out._spv](){
+        out._backward() = [_p1  = _spv.get(), relu,
+                           _out = out._spv.get()](){
             _p1->grad += (relu > 0.0) * _out->grad;
         };
         return out;
