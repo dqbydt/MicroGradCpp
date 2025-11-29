@@ -40,5 +40,12 @@ int main()
     std::cout << L << n << b << x1w1x2w2 << x1w1 << x2w2 << x1 << w1 << x2 << w2;
     std::cout.flush();
 
+    auto ta = torch::tensor(2.0, torch::requires_grad());
+    auto tb = torch::tensor(3.0, torch::requires_grad());
+    auto tc = ta + tb;
+    tc.backward();
+
+    std::cout << std::format("tb = {:.3f}\n", tb.item<double>());
+
     return 0;
 }
