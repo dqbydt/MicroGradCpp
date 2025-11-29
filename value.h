@@ -284,6 +284,7 @@ public:
 // For constant +/* Value
 Value operator*(double d, const Value& v) { return v*d; }
 Value operator+(double d, const Value& v) { return v+d; }
+Value operator/(double d, const Value& v) { return d*v.pow(-1.0); }
 
 
 #endif // VALUE_H

@@ -12,7 +12,7 @@
 using Catch::Matchers::WithinAbs;
 constexpr double ABS_TOLERANCE = 1e-6;
 
-// === FORCE ALL LIBTORCH TENSORS TO DOUBLE (match your Value class) ===
+// === FORCE ALL LIBTORCH TENSORS TO DOUBLE ===
 [[maybe_unused]] static const auto _force_double = []{
     torch::set_default_dtype(c10::scalarTypeToTypeMeta(torch::kDouble));
     std::cout << "Forcing PyTorch default datatype to double\n";
@@ -80,7 +80,7 @@ TEST_CASE("Karpathy more ops", "[karpathy-more]") {
     auto e = c - d;
     auto f = e.pow(2);
     auto g = f / 2.0;
-    g = g + f/10.0;
+    g = g + 10.0/f;
     g.backward();
 
     auto ta = torch::tensor(-4.0, torch::requires_grad());
@@ -94,7 +94,7 @@ TEST_CASE("Karpathy more ops", "[karpathy-more]") {
     auto te = tc - td;
     auto tf = te.pow(2);
     auto tg = tf / 2.0;
-    tg = tg + tf/10.0;
+    tg = tg + 10.0/tf;
     tg.backward();
 
     // Fwd pass
