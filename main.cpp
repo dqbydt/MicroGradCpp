@@ -29,9 +29,10 @@ int main()
     Value n = x1w1x2w2 + b; n.label() = 'n';
 
     // Final output of the neuron
-    Value e = (2*n).exp(); e.label() = 'e';
-    Value L = (e-1)/(e+1); L.label() = 'L';
+    //Value e = (2*n).exp(); e.label() = 'e';
+    //Value L = (e-1)/(e+1); L.label() = 'L';
     //Value L = n.tanh(); L.label() = 'L';
+    Value L = n.relu(); L.label() = 'L';
     L.grad() = 1.0;
 
     // Perform the backward pass
@@ -39,6 +40,19 @@ int main()
 
     std::cout << L << n << b << x1w1x2w2 << x1w1 << x2w2 << x1 << w1 << x2 << w2;
     std::cout.flush();
+
+    // w1.grad = 1.0. So inc w1 will cause L to inc
+    w1 = w1 + 0.001;
+    L = (x1*w1 + x2*w2 + b).relu();
+    std::cout << L; std::cout.flush();
+    L.backward();
+    std::cout << L << w1; std::cout.flush();
+
+    w1 = w1 + 0.001;
+    L = (x1*w1 + x2*w2 + b).relu();
+    std::cout << L; std::cout.flush();
+    L.backward();
+    std::cout << L << w1; std::cout.flush();
 
     auto ta = torch::tensor(2.0, torch::requires_grad());
     auto tb = torch::tensor(3.0, torch::requires_grad());
