@@ -4,6 +4,7 @@
 #include <format>
 
 #include "value.h"
+#include "nn.h"
 
 int main()
 {
@@ -53,6 +54,12 @@ int main()
     std::cout << L; std::cout.flush();
     L.backward();
     std::cout << L << w1; std::cout.flush();
+
+    Neuron nn(3);
+    auto inputs = std::vector{1.0, 2.0, 3.0};  // doubles auto-convert
+    auto out = nn(inputs);
+    std::cout << "-----------\n";
+    std::cout << "Neuron output: " << out << "\n";
 
     auto ta = torch::tensor(2.0, torch::requires_grad());
     auto tb = torch::tensor(3.0, torch::requires_grad());

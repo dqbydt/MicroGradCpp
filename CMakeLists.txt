@@ -11,7 +11,8 @@ add_library(pch_obj OBJECT stdafx.cpp)
 target_link_libraries(pch_obj PUBLIC "${TORCH_LIBRARIES}")
 
 # === Main app ===
-add_executable(MicroGradCpp main.cpp value.h)
+add_executable(MicroGradCpp main.cpp value.h
+    nn.h)
 target_link_libraries(MicroGradCpp PRIVATE pch_obj "${TORCH_LIBRARIES}")
 # Apply PCH to the real executable
 target_precompile_headers(MicroGradCpp PRIVATE <torch/torch.h>)
