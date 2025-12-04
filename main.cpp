@@ -56,9 +56,9 @@ int main()
     std::cout << L << w1; std::cout.flush();
 
     Neuron nn(3);
-    auto inputs = std::vector{1.0, 2.0, 3.0};  // doubles auto-convert
-    auto out = nn(inputs);
+    auto out = nn({1.0, 2.0, 3.0});
     std::cout << "-----------\n";
+    std::cout << nn;
     std::cout << "Neuron output: " << out << "\n";
 
     auto ta = torch::tensor(2.0, torch::requires_grad());

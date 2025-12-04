@@ -6,8 +6,12 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <catch2/catch_session.hpp>
 
+#include <random>
+
 #include <torch/torch.h>
 #include "../value.h"
+#include "../nn.h"
+#include "ptnn.h"
 
 using Catch::Matchers::WithinAbs;
 constexpr double ABS_TOLERANCE = 1e-6;
@@ -18,6 +22,13 @@ constexpr double ABS_TOLERANCE = 1e-6;
     std::cout << "Forcing PyTorch default datatype to double\n";
     return 0;
 }();
+
+inline double rand_uniform_m1_1() {
+    // One RNG per thread
+    static thread_local std::mt19937 gen(std::random_device{}());
+    static thread_local std::uniform_real_distribution<double> urd(-1.0, 1.0);
+    return urd(gen);
+}
 
 TEST_CASE("Value addition matches libtorch", "[basic]") {
     Value a(2.0), b(3.0);
@@ -103,4 +114,20 @@ TEST_CASE("Karpathy more ops", "[karpathy-more]") {
     CHECK_THAT(a.grad(), WithinAbs(ta.grad().item<double>(), ABS_TOLERANCE));
     CHECK_THAT(b.grad(), WithinAbs(tb.grad().item<double>(), ABS_TOLERANCE));
 
+}
+
+TEST_CASE("Neuron matches libtorch", "[neuron]") {
+
+    std::array<double, 4> w_b;
+    std::ranges::generate(w_b, rand_uniform_m1_1);  // Populates the array by calling rand_uniform repeatedly
+
+    Neuron n{w_b};
+    auto out = n({1.0, 2.0, 3.0});
+
+    TorchNeuron tn(3);
+    tn.linear->weight = torch::tensor({{w_b[0], w_b[1], w_b[2]}});
+    tn.linear->bias   = torch::tensor({w_b[3]});
+    auto tout = tn(torch::tensor({1.0, 2.0, 3.0}));
+
+    REQUIRE_THAT(out.data(), WithinAbs(tout.data().item<double>(), ABS_TOLERANCE));
 }

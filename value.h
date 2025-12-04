@@ -79,6 +79,8 @@ public:
 
     // For Values constructed by themselves (e.g. Value a{2.0}),
     // the _spv->_prev must be an empty set.
+    Value() : Value{0.0} {}
+
     Value(double d) : _spv{std::make_shared<_Value>(d)} {}
 
     Value(double d, std::string label) :
@@ -105,7 +107,7 @@ public:
         if (_spv) {
             //std::cout << std::format("Value({:.3f}, \"{}\") dtor\n", data(), label());
         } else {
-            std::cout << std::format("Moved-from-Value dtor\n");
+            //std::cout << std::format("Moved-from-Value dtor\n");
         }
         std::cout.flush();
     }
