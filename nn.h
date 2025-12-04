@@ -10,10 +10,8 @@ class Neuron {
 
 public:
     // Creates a Neuron with "nin" inputs, init to random weights and bias
-    Neuron(size_t nin) : b{Value{rand_uniform_m1_1()}} {
-        for ([[maybe_unused]] auto _ : std::views::iota(0u, nin)) {
-            w.emplace_back(Value{rand_uniform_m1_1()});
-        }
+    explicit Neuron(size_t nin) : nin(nin), params(nin+1) {
+        for (auto& p : params) p = Value{rand_uniform_m1_1()};
     }
 
     // Allows external injection of w_b's/b for testing/comparison with PT
@@ -23,21 +21,21 @@ public:
         requires std::ranges::sized_range<decltype(w_b)>
     {
         const auto n = std::ranges::size(w_b);
+        assert(n == nin+1);
 
-        // First n-1 values from the input_range are weights
-        w = w_b
-            | std::views::take(n-1)
-            | std::views::transform([](auto&& v) { return Value(std::forward<decltype(v)>(v)); })
-            | std::ranges::to<std::vector>();
+        params.reserve(n);
 
-        // Last value is the bias
-        b = Value{*std::prev(std::ranges::end(w_b))};
+        for (auto&& p : w_b) {
+            params.emplace_back(Value{std::forward<decltype(p)>(p)});
+        }
     }
 
     Value operator()(std::ranges::input_range auto&& x) const {
+        // zip_transform terminates at the end of the shortest input range.
+        // Here that is x, which should be 1 less than the length of the params vec
         auto act =  std::ranges::fold_left(
-                        std::views::zip_transform(std::multiplies<>{}, w, x),
-                        b + 0.0,    // prvalue to work around deleted copy. std::move(b)?
+                        std::views::zip_transform(std::multiplies<>{}, params, x),
+                        params.back() + 0.0,    // prvalue to work around deleted copy
                         std::plus<>{}
                     );
         auto out = act.tanh();
@@ -54,15 +52,20 @@ public:
     }
 
     friend std::ostream& operator<<(std::ostream& os, const Neuron& n) {
+        auto nin = n.params.size()-1;
+        auto wv = n.params | std::views::take(nin);
         os << "Neuron(\n ";
-        for (const auto& w : n.w) os << w << " ";
-        os << "bias=" << n.b << ")\n";
+        for (const auto& w : wv) os << w << " ";
+        os << "bias=" << n.params.back() << ")\n";
         return os;
     }
 
+    std::span<const Value> parameters() const { return params; }
+    std::span<Value>       parameters()       { return params; }
+
 private:
-    std::vector<Value> w;
-    Value b;
+    std::vector<Value> params;
+    size_t nin;
 
     inline double rand_uniform_m1_1() {
         // One RNG per thread

@@ -116,18 +116,46 @@ TEST_CASE("Karpathy more ops", "[karpathy-more]") {
 
 }
 
-TEST_CASE("Neuron matches libtorch", "[neuron]") {
+TEST_CASE("Single neuron matches libtorch", "[neuron]") {
 
     std::array<double, 4> w_b;
     std::ranges::generate(w_b, rand_uniform_m1_1);  // Populates the array by calling rand_uniform repeatedly
 
     Neuron n{w_b};
     auto out = n({1.0, 2.0, 3.0});
+    //std::cout << n;
+    out.backward();
 
     TorchNeuron tn(3);
-    tn.linear->weight = torch::tensor({{w_b[0], w_b[1], w_b[2]}});
-    tn.linear->bias   = torch::tensor({w_b[3]});
+    // Ugh manual spec of elements
+    //tn.linear->weight = torch::tensor({{w_b[0], w_b[1], w_b[2]}});
+    tn.linear->weight.set_data(torch::from_blob(w_b.data(), {1, 3}));   // Courtesy Grok
+    // Why don't these work??
+    //tn.linear->weight = torch::tensor(w_b | std::views::take(3) | std::ranges::to<std::vector>());
+    //tn.linear->weight = torch::tensor(w_b | std::views::take(3) | std::ranges::to<std::array>());
+    //tn.linear->weight = torch::tensor(std::to_array(w_b | std::views::take(3)));
+
+    // set_data ensures that the initial requires_grad persists
+    tn.linear->bias.set_data(torch::tensor({w_b[3]}));
     auto tout = tn(torch::tensor({1.0, 2.0, 3.0}));
+    tout.backward();
+    std::cout << tn;
+
+    std::array<double, 4> torch_grads = {
+        tn.linear->weight.grad()[0][0].item<double>(),
+        tn.linear->weight.grad()[0][1].item<double>(),
+        tn.linear->weight.grad()[0][2].item<double>(),
+        tn.linear->bias.grad().item<double>()
+    };
+
+    auto mg_params = n.parameters();
 
     REQUIRE_THAT(out.data(), WithinAbs(tout.data().item<double>(), ABS_TOLERANCE));
+    for (int i = 0; i < 4; ++i) {
+        INFO("Parameter index: " << i
+                                 << " | micrograd grad: " << mg_params[i].grad()
+                                 << " | torch grad: "     << torch_grads[i]);
+
+        REQUIRE_THAT(mg_params[i].grad(), WithinAbs(torch_grads[i], ABS_TOLERANCE));
+    }
 }
