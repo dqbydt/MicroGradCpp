@@ -9,6 +9,7 @@
 #include <tuple>
 #include <cmath>
 #include <functional>
+#include <ranges>
 
 struct _Value;
 using _vtsp = std::tuple<std::shared_ptr<_Value>, std::shared_ptr<_Value>>;
@@ -93,7 +94,7 @@ public:
         _spv {std::make_shared<_Value>(d, std::move(parents), std::move(op))}
     {}
 
-    // Prevent copy - otherwise would corrupt expr graph
+    // Prevent copy - don't want to allow copies of graph nodes
     Value(const Value&) = delete;
     Value& operator=(const Value&) = delete;
 
@@ -158,9 +159,13 @@ public:
 
         // Do the backward pass on the topo-sorted list of nodes
         grad() = 1.0;
-        for (auto it = topo_cache.rbegin(); it != topo_cache.rend(); it++) {
-            (*it)->_backward();
-        }
+
+        // See https://gemini.google.com/app/d15a05e63b3eaaeb for why you cannot just do
+        // std::ranges::for_each(std::views::reverse(topo_cache), &_Value::_backward);
+        // Tl;dr: &_Value::_backward is a ptr to a data member. When std::invoke sees a
+        // pointer to a data member, its defined behavior is to access that member, not call it.
+        // Workaround is to use a lambda to call the member lambda:
+        std::ranges::for_each(std::views::reverse(topo_cache), [](auto* node) { node->_backward(); });
 
     }
 

@@ -60,6 +60,7 @@ int main()
     std::cout << "-----------\n";
     std::cout << nn;
     std::cout << "Neuron output: " << out << "\n";
+    out.backward();
 
     auto ta = torch::tensor(2.0, torch::requires_grad());
     auto tb = torch::tensor(3.0, torch::requires_grad());
