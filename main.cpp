@@ -62,12 +62,12 @@ int main()
     std::cout << "Neuron output: " << out << "\n";
     out.backward();
 
-    auto ta = torch::tensor(2.0, torch::requires_grad());
-    auto tb = torch::tensor(3.0, torch::requires_grad());
-    auto tc = ta + tb;
-    tc.backward();
-
-    std::cout << std::format("tb = {:.3f}\n", tb.item<double>());
+    std::cout << "Layer test\n";
+    Layer l{2,3};   // 2 inputs, 3 neurons (so 3 outputs)
+    auto outs = l({1,0, 2.0});
+    for (const auto& lout : outs) {
+        std::cout << lout;
+    }
 
     return 0;
 }

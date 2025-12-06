@@ -75,4 +75,47 @@ private:
     }
 };
 
+// Layer: each L has a number of Neurons. They are not connected to each other
+// but are fully connected to the input. So a layer of Ns is just a set of Ns
+// evaluated independently.
+// Layer params: nin = # of inputs to each N in the layer, = # of Ns in the prev L
+// (each N from prev L is connected to each N of this one. So # of inputs for each
+// N in this layer = # of N's in prev layer).
+// nout = # of outputs from this L, which is the same as # of N's in this L (since
+// each N has a single output).
+class Layer {
+public:
+    explicit Layer(size_t nin, size_t nout) {
+        neurons.reserve(nout);
+        for ([[maybe_unused]] auto _ : std::views::iota(0u, nout)) {
+            neurons.emplace_back(Neuron{nin});
+        }
+    }
+
+    // operator() for L calls this L with inputs x, which applies the
+    // input to each N in this layer. There are nout N's, so this will
+    // produce a lazy transform_view of output Values which are the
+    // result of calling each N with the inputs x.
+    // NOTE: capturing inputs by ref, so inputs need to live at least
+    // as long as the Layer.
+    auto operator()(std::ranges::input_range auto&& x) const {
+        return neurons | std::views::transform([&](const auto& n) { return n(x); });
+    }
+
+    // Same overload as for Neuron to allow init_list to be passed
+    auto operator()(std::initializer_list<double> ild) const {
+        return operator()(std::vector(ild));
+    }
+
+    // parameters() — flat view of all Neurons' params
+    auto parameters() const {
+        return neurons
+               | std::views::transform([](const auto& n) { return n.parameters(); })
+               | std::views::join;
+    }
+
+private:
+    std::vector<Neuron> neurons;
+};
+
 #endif // NN_H
