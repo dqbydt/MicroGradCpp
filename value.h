@@ -2,6 +2,7 @@
 #define VALUE_H
 
 #include <iostream>
+#include <print>
 #include <format>
 #include <set>
 #include <vector>
@@ -49,7 +50,7 @@ struct _Value {
     }
 
     ~_Value() {
-        //std::cout << std::format("_Value({:.3f}, \"{}\") dtor\n", data, label);
+        //std::println("_Value({:.3f}, \"{}\") dtor", data, label);
     }
 
 };
@@ -106,9 +107,9 @@ public:
     // the _spv is a nullptr!
     ~Value() {
         if (_spv) {
-            //std::cout << std::format("Value({:.3f}, \"{}\") dtor\n", data(), label());
+            //std::println("Value({:.3f}, \"{}\") dtor", data(), label());
         } else {
-            //std::cout << std::format("Moved-from-Value dtor\n");
+            //std::println("Moved-from-Value dtor");
         }
         std::cout.flush();
     }
@@ -144,13 +145,13 @@ public:
             // Build topo graph starting at this node
             build_topo(root);
 
-            std::cout << "Topo sorted graph:\n";
+            std::println("Topo sorted graph:");
             for (auto& _pv : topo_cache) {
-                std::cout << std::format("_Value(data={}{:.3f}, grad={}{:.3f}, label=\"{}\")\n",
+                std::println("_Value(data={}{:.3f}, grad={}{:.3f}, label=\"{}\")",
                                          sgnspc(_pv->data), _pv->data,
                                          sgnspc(_pv->grad), _pv->grad, _pv->label);
             }
-            std::cout << "------------------\n";
+            std::println("------------------");
 
             // Reset visited nodes - this enables re-computation of topo sort on a diff node.
             // Note special case auto* "deduce-as-pointer" syntax in range-for loop!
