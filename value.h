@@ -22,6 +22,7 @@ struct _Value {
     double grad         = 0.0;
     std::string op      = "";
     std::string label   = "";
+    bool is_compiled    = false;
 
     bool visited = false;
     // Caches the topo sort order the first time backward() is run on this node.
@@ -68,6 +69,45 @@ private:
     // Insert space before +ve vals for pretty-printing
     static constexpr const char* sgnspc(double d) { return (d >= 0)? " ":""; };
 
+    void topo_sort() {
+
+        // Alias names for semantic convenience
+        auto* root = _spv.get();
+        auto& topo_cache = root->topo_cache;
+
+        std::vector<_Value*> visited;   // Store visited nodes to reset flags later
+
+        // Note: auto return type does not work for recursive calls; need to
+        // fully specify the type of the lambda.
+        // auto build_topo = [&](_Value* _pv) -> void {
+        std::function<void(_Value*)> build_topo = [&](_Value* _pv) {
+            if (_pv->visited) return;
+
+            _pv->visited = true;
+            visited.push_back(_pv);
+
+            for (const auto& spp : _pv->_prev) {
+                build_topo(spp.get());
+            }
+            topo_cache.push_back(_pv);
+        };
+
+        // Build topo graph starting at this node
+        build_topo(root);
+
+        std::println("Topo sorted graph:");
+        for (auto& _pv : topo_cache) {
+            std::println("_Value(data={}{:.3f}, grad={}{:.3f}, label=\"{}\", op=\"{}\")",
+                         sgnspc(_pv->data), _pv->data,
+                         sgnspc(_pv->grad), _pv->grad, _pv->label, _pv->op);
+        }
+        std::println("------------------");
+
+        // Reset visited nodes - this enables re-computation of topo sort on a diff node.
+        // Note special case auto* "deduce-as-pointer" syntax in range-for loop!
+        for (auto* _pv : visited) _pv->visited = false;
+    }
+
 public:
     // These were previously ref members initialized to the
     // corresponding members of the backing object. Have had
@@ -78,6 +118,7 @@ public:
     double&         grad()  const   { return _spv->grad;    }
     std::string&    op()    const   { return _spv->op;      }
     std::string&    label() const   { return _spv->label;   }
+    bool&           is_compiled() const { return _spv->is_compiled; }
 
     // For Values constructed by themselves (e.g. Value a{2.0}),
     // the _spv->_prev must be an empty set.
@@ -114,48 +155,22 @@ public:
         std::cout.flush();
     }
 
+    // To be called after building the graph via a dummy fwd pass
+    void compile() {
+        topo_sort();
+        is_compiled() = true;
+    }
 
     // Actually calls the _backward lambda that was set up below during the
     // expression build.
     void backward() {
 
         // Alias names for semantic convenience
-        auto* root = _spv.get();
-        auto& topo_cache = root->topo_cache;
+        auto& topo_cache = _spv->topo_cache;
 
-        // Build topo order if cache is empty
-        if (topo_cache.empty()) {
-            std::vector<_Value*> visited;   // Store visited nodes to reset flags later
-
-            // Note: auto return type does not work for recursive calls; need to
-            // fully specify the type of the lambda.
-            // auto build_topo = [&](_Value* _pv) -> void {
-            std::function<void(_Value*)> build_topo = [&](_Value* _pv) {
-                if (_pv->visited) return;
-
-                _pv->visited = true;
-                visited.push_back(_pv);
-
-                for (const auto& spp : _pv->_prev) {
-                    build_topo(spp.get());
-                }
-                topo_cache.push_back(_pv);
-            };
-
-            // Build topo graph starting at this node
-            build_topo(root);
-
-            std::println("Topo sorted graph:");
-            for (auto& _pv : topo_cache) {
-                std::println("_Value(data={}{:.3f}, grad={}{:.3f}, label=\"{}\")",
-                                         sgnspc(_pv->data), _pv->data,
-                                         sgnspc(_pv->grad), _pv->grad, _pv->label);
-            }
-            std::println("------------------");
-
-            // Reset visited nodes - this enables re-computation of topo sort on a diff node.
-            // Note special case auto* "deduce-as-pointer" syntax in range-for loop!
-            for (auto* _pv : visited) _pv->visited = false;
+        // Build topo order if set for dynamic graphs
+        if (!is_compiled()) {
+            topo_sort();
         }
 
         // Do the backward pass on the topo-sorted list of nodes
@@ -167,7 +182,6 @@ public:
         // pointer to a data member, its defined behavior is to access that member, not call it.
         // Workaround is to use a lambda to call the member lambda:
         std::ranges::for_each(std::views::reverse(topo_cache), [](auto* node) { node->_backward(); });
-
     }
 
     // operator<< overload for printing
