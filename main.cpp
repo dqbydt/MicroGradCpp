@@ -69,5 +69,11 @@ int main()
         std::cout << lout;
     }
 
+    MLP mlp{3, {4,4,1}};
+    auto outview = mlp({2.0, 3.0, -1.0});
+    for (const auto& outm : outview) {
+        std::cout << "MLP output: " << outm << "\n";
+    }
+
     return 0;
 }

@@ -94,8 +94,10 @@ public:
 
     // operator() for L calls this L with inputs x, which applies the
     // input to each N in this layer. There are nout N's, so this will
-    // produce a lazy transform_view of output Values which are the
-    // result of calling each N with the inputs x.
+    // produce a lazy transform_view of nout output Values which are the
+    // result of calling each N with the inputs x. This does not actually
+    // perform the operation! That will be done only when the Values are
+    // extracted/materialized.
     // NOTE: capturing inputs by ref, so inputs need to live at least
     // as long as the Layer.
     auto operator()(std::ranges::input_range auto&& x) const {
@@ -116,6 +118,46 @@ public:
 
 private:
     std::vector<Neuron> neurons;
+};
+
+
+// MLP: Layers feed into each other sequentially. MLP takes ctor args nin, which is
+// the number of inputs to the structure, and an init_list of nouts, which defines
+// the sizes of the Layers in the MLP.
+class MLP {
+public:
+    MLP(size_t nin, std::initializer_list<size_t> nouts) {
+        layers.reserve(nouts.size());
+        // Combine input params into a layer_sizes vec
+        std::vector layer_sizes = {nin};
+        layer_sizes.insert(layer_sizes.end(), nouts.begin(), nouts.end());
+
+        // Want to iterate 0 to layer_sizes-1, or equivalently, 0 to nouts
+        for (auto i : std::views::iota(0u, nouts.size())) {
+            std::println("Creating Layer({},{})", layer_sizes[i], layer_sizes[i+1]);
+            layers.emplace_back(Layer{layer_sizes[i], layer_sizes[i+1]});
+        }
+    }
+
+    // Same operation as Layer::oeprator()
+    auto operator()(std::ranges::input_range auto&& x) const {
+        return layers | std::views::transform([&](const auto& l) { return l(x); });
+    }
+
+    // Same overload as for Layer to allow init_list to be passed
+    auto operator()(std::initializer_list<double> ild) const {
+        return operator()(std::vector(ild));
+    }
+
+    // parameters() — flat view of all Layers' params
+    auto parameters() const {
+        return layers
+               | std::views::transform([](const auto& l) { return l.parameters(); })
+               | std::views::join;
+    }
+
+private:
+    std::vector<Layer> layers;
 };
 
 #endif // NN_H
