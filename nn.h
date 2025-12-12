@@ -14,7 +14,7 @@ public:
         for (auto& p : params) p = Value{rand_uniform_m1_1()};
     }
 
-    // Allows external injection of w_b's/b for testing/comparison with PT
+    // Allows external injection of w_b's/b for testing/comparison with PyTorch
     // Works with vector<double>, array<double, N>, initializer_list<double>, span<const double>
     // Treats all but the last as weights; last as bias.
     explicit Neuron(std::ranges::input_range auto&& w_b)
@@ -64,7 +64,7 @@ public:
     std::span<Value>       parameters()       { return params; }
 
 private:
-    std::vector<Value> params;
+    std::vector<Value> params;  // Last = bias, rest = weights
     size_t nin;
 
     inline double rand_uniform_m1_1() {
@@ -134,19 +134,26 @@ public:
 
         // Want to iterate 0 to layer_sizes-1, or equivalently, 0 to nouts
         for (auto i : std::views::iota(0u, nouts.size())) {
-            std::println("Creating Layer({},{})", layer_sizes[i], layer_sizes[i+1]);
+            std::println("MLP: Creating Layer({},{})", layer_sizes[i], layer_sizes[i+1]);
             layers.emplace_back(Layer{layer_sizes[i], layer_sizes[i+1]});
         }
     }
 
-    // Same operation as Layer::oeprator()
+    // Iterate over each layer successively, feeding in output of
+    // last into input of next
     auto operator()(std::ranges::input_range auto&& x) const {
-        return layers | std::views::transform([&](const auto& l) { return l(x); });
+        for (auto& layer : layers) {
+            x = layer(x) | std::ranges::to<std::vector<Value>>();
+        }
+        return x;
     }
 
-    // Same overload as for Layer to allow init_list to be passed
+    // Here we must convert the init_list to vec<Value> to enable it to be
+    // used in the input_range operator() above
     auto operator()(std::initializer_list<double> ild) const {
-        return operator()(std::vector(ild));
+        return operator()(std::vector(ild)
+                          | std::views::transform([](auto d) { return Value{d}; })
+                          | std::ranges::to<std::vector<Value>>());
     }
 
     // parameters() — flat view of all Layers' params

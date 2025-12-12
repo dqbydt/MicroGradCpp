@@ -57,12 +57,12 @@ int main()
 
     Neuron nn(3);
     auto out = nn({1.0, 2.0, 3.0});
-    std::cout << "-----------\n";
+    std::println("-----------");
     std::cout << nn;
     std::cout << "Neuron output: " << out << "\n";
     out.backward();
 
-    std::cout << "Layer test\n";
+    std::println("Layer test");
     Layer l{2,3};   // 2 inputs, 3 neurons (so 3 outputs)
     auto outs = l({1,0, 2.0});
     for (const auto& lout : outs) {
@@ -70,10 +70,12 @@ int main()
     }
 
     MLP mlp{3, {4,4,1}};
-    auto outview = mlp({2.0, 3.0, -1.0});
-    for (const auto& outm : outview) {
-        std::cout << "MLP output: " << outm << "\n";
+    auto outvals = mlp({2.0, 3.0, -1.0});
+    for (const auto& v : outvals) {
+        std::cout << "MLP output: " << v << "\n";
     }
+
+    std::println("# of params = {}", std::ranges::distance(mlp.parameters()));
 
     return 0;
 }

@@ -159,3 +159,77 @@ TEST_CASE("Single neuron matches libtorch", "[neuron]") {
         REQUIRE_THAT(mg_params[i].grad(), WithinAbs(torch_grads[i], ABS_TOLERANCE));
     }
 }
+
+TEST_CASE("MLP matches libtorch", "[mlp]") {
+
+    std::array<double, 41> w_b;
+    std::ranges::generate(w_b, rand_uniform_m1_1);  // Populates the array by calling rand_uniform repeatedly
+
+    MLP mlp{3, {4,4,1}};
+    std::println("# of params = {}", std::ranges::distance(mlp.parameters()));
+
+    auto out = mlp({2.0, 3.0, -1.0});
+    std::cout << "Random init output: " << out << "\n";
+
+    // Note, cannot do the following:
+    // std::ranges::copy(w_b, std::ranges::begin(mlp.parameters()));
+    // This is bc mlp.parameters() is a join_view<transform_view<...>>. It is not a mutable
+    // container that you can write into with std::ranges::copy.
+
+    // Note neat method of initializing each element of params with the
+    // corresponding element of w_b:
+    for (auto&& [v, init] : std::views::zip(mlp.parameters(), w_b)) {
+        v.data() = init;
+    }
+
+    out = mlp({2.0, 3.0, -1.0});
+    std::cout << "With init vals: " << out << "\n";
+
+    TorchMLP tmlp{3, {4,4,1}};
+    auto tout = tmlp(torch::tensor({{2.0, 3.0, -1.0}}));
+    std::println("TorchMLP output = {:.3f}", tout.data().item<double>());
+
+    // Cannot do a similar zip-loop for TMLP! This is because tmlp.parameters()
+    // returns a std::vector<torch::Tensor> that contains all parameters in the
+    // order they were registered:
+    //      fc0.weight   → shape [4, 3]   → 12 elements
+    //      fc0.bias     → shape [4]      →  4 elements
+    //      fc1.weight   → shape [4, 4]   → 16 elements
+    //          . . .
+    // In the zip loop you are pairing the i-th parameter tensor with the i-th double.
+    // That means:
+    // first tensor (12 elements) → gets only 1 double → "expected 12, got 1"
+    // second tensor (4 elements) → gets the next single double → "expected 4, got 1"
+    // You cannot zip 1-to-1 with the flat array — the tensors have different sizes.
+    //
+    // for (auto&& [p, init] : std::views::zip(tmlp.parameters(), w_b)) {
+    //     p.set_data(torch::tensor({init}));  // braces around {init} needed to make param 1D
+    // }
+
+    // https://gemini.google.com/app/f1ce4c7f611085d1
+    auto it = w_b.begin();
+    for (auto& param : tmlp.parameters()) {
+        int64_t n = param.numel();
+
+        // 1. Create the tensor from the blob
+        auto data = torch::from_blob(&*it, {n}, torch::kFloat64).clone();
+
+        // 2. IMPORTANT: Reshape the 1D blob to the parameter's required dimensions
+        // This turns a flat vector back into (out_features, in_features) for weights
+        data = data.view(param.sizes());
+
+        // 3. Update the parameter data
+        // Use NoGradGuard to ensure this doesn't track history
+        // copy_ vs set_data: While set_data works, using param.copy_(data) is often
+        // preferred because it preserves the metadata and location of the original
+        // parameter tensor while just updating the values.
+        torch::NoGradGuard no_grad;
+        param.copy_(data);
+
+        std::advance(it, n);
+    }
+
+    tout = tmlp(torch::tensor({2.0, 3.0, -1.0}));
+    std::println("TorchMLP output with init vals = {:.3f}", tout.data().item<double>());
+
+}
