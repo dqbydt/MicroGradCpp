@@ -116,7 +116,7 @@ public:
                | std::views::join;
     }
 
-private:
+//private:
     std::vector<Neuron> neurons;
 };
 
@@ -142,8 +142,16 @@ public:
     // Iterate over each layer successively, feeding in output of
     // last into input of next
     auto operator()(std::ranges::input_range auto&& x) const {
+        std::println("Inputs:");
+        std::ranges::for_each(x, [](auto& v) { std::cout << v; } );
+        std::println();
+
+        int l = 1;
         for (auto& layer : layers) {
             x = layer(x) | std::ranges::to<std::vector<Value>>();
+            std::println("Layer {} outputs:", l++);
+            std::ranges::for_each(x, [](auto& v) { std::cout << v; } );
+            std::println();
         }
         return x;
     }
@@ -163,7 +171,7 @@ public:
                | std::views::join;
     }
 
-private:
+//private:
     std::vector<Layer> layers;
 };
 

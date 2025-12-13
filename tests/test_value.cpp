@@ -160,10 +160,126 @@ TEST_CASE("Single neuron matches libtorch", "[neuron]") {
     }
 }
 
+// --- Helper function to define the network architecture ---
+// Since the swizzling needs the layer sizes, we need this structure to
+// correctly map the dimensions.
+struct LayerInfo {
+    int64_t in_features;
+    int64_t out_features;
+    int64_t total_params;
+};
+
+// --- Function to perform the swizzling ---
+std::vector<double> create_pytorch_flat_params(
+    std::span<const double> w_b_custom_flat, // Your neuron-major flat array
+    std::initializer_list<size_t> layer_sizes // {4, 4, 1}
+    ) {
+    // Determine the full architecture for iteration: 3 -> 4 -> 4 -> 1
+    std::vector<LayerInfo> architecture;
+    int64_t current_in = 3; // nin = 3, based on your tmlp{3, {4,4,1}}
+
+    // Build the architecture info
+    for (size_t out_size : layer_sizes) {
+        int64_t current_out = static_cast<int64_t>(out_size);
+        int64_t total = current_out * (current_in + 1);
+        architecture.push_back({current_in, current_out, total});
+        current_in = current_out;
+    }
+
+    // Verify the total size
+    int64_t expected_total_size = 0;
+    for (const auto& info : architecture) {
+        expected_total_size += info.total_params;
+    }
+    if (expected_total_size != w_b_custom_flat.size()) {
+        std::println("Error: Architecture size {} does not match input array size {}.",
+                     expected_total_size, w_b_custom_flat.size());
+        return {}; // Return empty vector on mismatch
+    }
+
+    // --- Swizzling Logic ---
+    std::vector<double> w_b_pt; // The final PyTorch-ordered flat array
+    auto custom_it = w_b_custom_flat.begin();
+
+    for (const auto& layer : architecture) {
+        std::vector<double> pt_flat_weights;
+        std::vector<double> pt_flat_biases;
+
+        std::println("Swizzling Layer: {} -> {}", layer.in_features, layer.out_features);
+
+        // 1. Unpack from Custom (Neuron-major) Order
+        // Custom order: [ (W_N1), B_N1, (W_N2), B_N2, ... ]
+        for (int64_t n = 0; n < layer.out_features; ++n) {
+
+            // A. Weights for Neuron N (in_features values)
+            auto weights_range = std::ranges::subrange(custom_it, custom_it + layer.in_features);
+            std::ranges::copy(weights_range, std::back_inserter(pt_flat_weights));
+            custom_it += layer.in_features;
+
+            // B. Bias for Neuron N (1 value)
+            pt_flat_biases.push_back(*custom_it);
+            custom_it++;
+        }
+
+        // 2. Repack into PyTorch (Layer-major) Order
+        // PyTorch order for a layer: [ Weight Matrix (flattened) ], [ Bias Vector ]
+
+        // Append all weights first (Weight Matrix: [out, in] flattened row-major)
+        std::ranges::copy(pt_flat_weights, std::back_inserter(w_b_pt));
+
+        // Append all biases next (Bias Vector: [out] )
+        std::ranges::copy(pt_flat_biases, std::back_inserter(w_b_pt));
+    }
+
+    return w_b_pt;
+}
+
 TEST_CASE("MLP matches libtorch", "[mlp]") {
 
-    std::array<double, 41> w_b;
-    std::ranges::generate(w_b, rand_uniform_m1_1);  // Populates the array by calling rand_uniform repeatedly
+    std::array<double, 41> w_b = {
+        0.4567586743459362,
+        -0.7891836110392254,
+        -0.44887830862390277,
+        -0.8186330725257585,
+        -0.22593813623021575,
+        -0.16432779500893546,
+        0.5937431020406805,
+        0.21789175846576891,
+        -0.8215172707414129,
+        0.4945993482649922,
+        -0.10895162052883633,
+        0.2742519517612745,
+        0.43529260458437236,
+        0.070438875589103,
+        -0.11732098445982286,
+        0.46756788860100507,
+        0.776804984571531,
+        0.48655569212333094,
+        -0.8340129869412527,
+        -0.9612742574115734,
+        0.2393245969601474,
+        -0.8521972230899275,
+        -0.6128703131175552,
+        -0.529124885030632,
+        -0.8480265962031999,
+        -0.7814084981684273,
+        -0.8805687514921439,
+        0.32062710266821215,
+        -0.7723148731011704,
+        0.7130170047171043,
+        -0.36211426771666577,
+        -0.48555634644226164,
+        0.10057022512856806,
+        0.7204828842048876,
+        -0.25174010184200957,
+        0.8549771745895092,
+        0.6281135149040777,
+        -0.6472284682766034,
+        0.6355787586092168,
+        -0.7609336029822684,
+        -0.3109609348451259,
+};
+    //std::ranges::generate(w_b, rand_uniform_m1_1);  // Populates the array by calling rand_uniform repeatedly
 
     MLP mlp{3, {4,4,1}};
     std::println("# of params = {}", std::ranges::distance(mlp.parameters()));
@@ -184,6 +300,10 @@ TEST_CASE("MLP matches libtorch", "[mlp]") {
 
     out = mlp({2.0, 3.0, -1.0});
     std::cout << "With init vals: " << out << "\n";
+
+    std::println("Params:");
+    std::ranges::for_each(mlp.layers[0].neurons[0].parameters(), [](const auto& v){ std::println("{}", v.data()); });
+    std::println();
 
     TorchMLP tmlp{3, {4,4,1}};
     auto tout = tmlp(torch::tensor({{2.0, 3.0, -1.0}}));
@@ -206,8 +326,14 @@ TEST_CASE("MLP matches libtorch", "[mlp]") {
     //     p.set_data(torch::tensor({init}));  // braces around {init} needed to make param 1D
     // }
 
+    // 2. Swizzle the custom parameters into the PyTorch format
+    std::vector<double> w_b_pt = create_pytorch_flat_params(
+        std::span<const double>(w_b),
+        {4, 4, 1} // Must match the layers used in TorchMLP
+    );
+
     // https://gemini.google.com/app/f1ce4c7f611085d1
-    auto it = w_b.begin();
+    auto it = w_b_pt.begin();
     for (auto& param : tmlp.parameters()) {
         int64_t n = param.numel();
 
@@ -231,5 +357,77 @@ TEST_CASE("MLP matches libtorch", "[mlp]") {
 
     tout = tmlp(torch::tensor({2.0, 3.0, -1.0}));
     std::println("TorchMLP output with init vals = {:.3f}", tout.data().item<double>());
+
+    std::println("\n--- PyTorch Model Parameters ---");
+    for (const auto& pair : tmlp.named_parameters()) {
+        const std::string& name = pair.key();
+        const torch::Tensor& param = pair.value();
+
+        // Convert the Tensor to a std::vector<double> for easy printing
+        // Note: data_ptr<double>() gives a raw pointer to the underlying data
+        const double* data_ptr = param.data().to(torch::kCPU).data_ptr<double>();
+
+        // Create a view (or copy) of the data using C++23 ranges
+        auto data_view = std::span(data_ptr, param.numel());
+
+        // Format the sizes for printing
+        std::stringstream sizes_ss;
+        sizes_ss << param.sizes();
+
+        std::println("{}: {}", name, sizes_ss.str());
+
+        // Print up to the first 10 elements, then a summary
+        size_t count = std::min((size_t)10, data_view.size());
+        std::print("  [");
+        for (size_t i = 0; i < count; ++i) {
+            std::print("{}{}", data_view[i], (i < count - 1 ? ", " : ""));
+        }
+        if (data_view.size() > count) {
+            std::print(", ... ({} more values)", data_view.size() - count);
+        }
+        std::println("]");
+    }
+    std::println("------------------------\n");
+
+
+    // Input tensor (requires .unsqueeze(0) to become a batch of size 1)
+    torch::Tensor input = torch::tensor({2.0, 3.0, -1.0}, torch::kFloat64).unsqueeze(0);
+    std::cout << "Input Tensor (x):\n" << input << "\n";
+
+    torch::Tensor current_output = input;
+    size_t layer_idx = 0;
+
+    std::println("\n--- Layer-wise Outputs ---");
+    for (auto& module : *tmlp.net) {
+
+        // Forward pass for the current module
+        current_output = module.forward(current_output);
+
+        std::string module_type;
+        if (layer_idx % 2 == 0) {
+            module_type = "Linear (pre-activation)";
+            std::println("\n--- Layer {} ---", layer_idx / 2 + 1);
+        } else {
+            module_type = "Tanh (post-activation)";
+        }
+
+        // Convert the Tensor to a std::span<const double> for printing
+        const double* data_ptr = current_output.to(torch::kCPU).data_ptr<double>();
+        auto data_view = std::span(data_ptr, current_output.numel());
+
+        std::println("{}: (size {})", module_type, current_output.numel());
+        std::print("  [");
+        for (size_t i = 0; i < data_view.size(); ++i) {
+            std::print("{}{}", data_view[i], (i < data_view.size() - 1 ? ", " : ""));
+        }
+        std::println("]");
+
+        layer_idx++;
+    }
+    std::println("--------------------------");
+
+    tout = current_output; // Final output
+
+    REQUIRE_THAT(out[0].data(), WithinAbs(tout.data().item<double>(), ABS_TOLERANCE));
 
 }
