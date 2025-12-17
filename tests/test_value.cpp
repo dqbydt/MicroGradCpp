@@ -234,55 +234,115 @@ std::vector<double> create_pytorch_flat_params(
     return w_b_pt;
 }
 
+
+// Function to read gradients from PyTorch parameters and flatten them
+// into your custom neuron-major order, using a stack-allocated MLP.
+// Function to read gradients from PyTorch parameters and flatten them
+// into your custom neuron-major order, using a stack-allocated MLP.
+std::vector<double> read_gradients_in_custom_order(
+    TorchMLP& tmlp // Stack-allocated reference
+    ) {
+    // 1. Define the network architecture (same as before)
+    std::vector<LayerInfo> architecture;
+    int64_t current_in = 3;
+    std::vector<size_t> layer_sizes = {4, 4, 1};
+
+    for (size_t out_size : layer_sizes) {
+        architecture.push_back({current_in, static_cast<int64_t>(out_size)});
+        current_in = static_cast<int64_t>(out_size);
+    }
+
+    std::vector<double> grad_b_custom_flat;
+    size_t layer_architecture_index = 0; // Tracks the index in the architecture vector
+
+    // 2. Iterate over the named children of the Sequential container (net)
+    // The keys will be "0", "1", "2", ...
+    for (const auto& module_pair : tmlp.net->named_children()) {
+        const std::string& index_str = module_pair.key();
+        int index = std::stoi(index_str); // Convert key ("0", "1", etc.) to integer
+
+        // --- Filter for Linear Layers ---
+        // Linear layers are always at even indices (0, 2, 4, ...) in your Sequential
+        if (index % 2 != 0) {
+            continue; // Skip Tanh layers
+        }
+
+        // Ensure we haven't run out of architecture info (safety check)
+        if (layer_architecture_index >= architecture.size()) {
+            std::println("Error: Mismatch between Sequential size and architecture vector.");
+            break;
+        }
+
+        const LayerInfo& layer = architecture[layer_architecture_index];
+        int64_t out_features = layer.out_features;
+        int64_t in_features  = layer.in_features;
+
+        // Cast to LinearImpl to access weight and bias members
+        // The value() is a shared_ptr<Module>, so we use .get()->as<T>()
+        auto linear_ptr = module_pair.value().get()->as<torch::nn::LinearImpl>();
+
+        if (!linear_ptr) {
+            // This shouldn't happen for an even index, but check anyway
+            std::println("Error: Module at index {} is not a Linear layer.", index);
+            layer_architecture_index++;
+            continue;
+        }
+
+        // Get the gradient Tensors (PyTorch Order: Weight, then Bias)
+        torch::Tensor grad_weight = linear_ptr->weight.grad().to(torch::kCPU);
+        torch::Tensor grad_bias   = linear_ptr->bias.grad().to(torch::kCPU);
+
+        // Check if gradients exist before accessing data_ptr
+        if (!grad_weight.defined() || !grad_bias.defined()) {
+            std::println("Warning: Gradients not defined for layer {}. Did you call loss.backward()?", index);
+            layer_architecture_index++;
+            continue;
+        }
+
+        const double* w_grad_ptr = grad_weight.data_ptr<double>();
+        const double* b_grad_ptr = grad_bias.data_ptr<double>();
+
+        std::println("Reading Gradients from Sequential Index {} (Layer {}): {} -> {}",
+                     index, layer_architecture_index + 1, in_features, out_features);
+
+        // 3. Swizzle: Map PyTorch Order to Custom (Neuron-major) Order (same logic as before)
+        for (int64_t n = 0; n < out_features; ++n) {
+
+            // A. Read Weights Gradient for Neuron N
+            size_t start_index = static_cast<size_t>(n * in_features);
+            auto w_grad_span = std::span(w_grad_ptr + start_index, in_features);
+            std::ranges::copy(w_grad_span, std::back_inserter(grad_b_custom_flat));
+
+            // B. Read Bias Gradient for Neuron N
+            grad_b_custom_flat.push_back(b_grad_ptr[n]);
+        }
+
+        // Advance to the next layer in the architecture vector
+        layer_architecture_index++;
+    }
+
+    return grad_b_custom_flat;
+}
+
 TEST_CASE("MLP matches libtorch", "[mlp]") {
 
     std::array<double, 41> w_b = {
-        0.4567586743459362,
-        -0.7891836110392254,
-        -0.44887830862390277,
-        -0.8186330725257585,
-        -0.22593813623021575,
-        -0.16432779500893546,
-        0.5937431020406805,
-        0.21789175846576891,
-        -0.8215172707414129,
-        0.4945993482649922,
-        -0.10895162052883633,
-        0.2742519517612745,
-        0.43529260458437236,
-        0.070438875589103,
-        -0.11732098445982286,
-        0.46756788860100507,
-        0.776804984571531,
-        0.48655569212333094,
-        -0.8340129869412527,
-        -0.9612742574115734,
-        0.2393245969601474,
-        -0.8521972230899275,
-        -0.6128703131175552,
-        -0.529124885030632,
-        -0.8480265962031999,
-        -0.7814084981684273,
-        -0.8805687514921439,
-        0.32062710266821215,
-        -0.7723148731011704,
-        0.7130170047171043,
-        -0.36211426771666577,
-        -0.48555634644226164,
-        0.10057022512856806,
-        0.7204828842048876,
-        -0.25174010184200957,
-        0.8549771745895092,
-        0.6281135149040777,
-        -0.6472284682766034,
-        0.6355787586092168,
-        -0.7609336029822684,
-        -0.3109609348451259,
-};
+        0.4567586743459362,    -0.7891836110392254,   -0.44887830862390277, -0.8186330725257585,
+        -0.22593813623021575,  -0.16432779500893546,   0.5937431020406805,   0.21789175846576891,
+        -0.8215172707414129,    0.4945993482649922,   -0.10895162052883633,  0.2742519517612745,
+        0.43529260458437236,    0.070438875589103,    -0.11732098445982286,  0.46756788860100507,
+        0.776804984571531,      0.48655569212333094,  -0.8340129869412527,  -0.9612742574115734,
+        0.2393245969601474,    -0.8521972230899275,   -0.6128703131175552,  -0.529124885030632,
+        -0.8480265962031999,   -0.7814084981684273,   -0.8805687514921439,   0.32062710266821215,
+        -0.7723148731011704,    0.7130170047171043,   -0.36211426771666577, -0.48555634644226164,
+        0.10057022512856806,    0.7204828842048876,   -0.25174010184200957,  0.8549771745895092,
+        0.6281135149040777,    -0.6472284682766034,    0.6355787586092168,  -0.7609336029822684,
+        -0.3109609348451259,};
     //std::ranges::generate(w_b, rand_uniform_m1_1);  // Populates the array by calling rand_uniform repeatedly
 
     MLP mlp{3, {4,4,1}};
-    std::println("# of params = {}", std::ranges::distance(mlp.parameters()));
+    auto num_params = std::ranges::distance(mlp.parameters());
+    std::println("# of params = {}", num_params);
 
     auto out = mlp({2.0, 3.0, -1.0});
     std::cout << "Random init output: " << out << "\n";
@@ -332,6 +392,7 @@ TEST_CASE("MLP matches libtorch", "[mlp]") {
         {4, 4, 1} // Must match the layers used in TorchMLP
     );
 
+    // Inject swizzled params into PT MLP
     // https://gemini.google.com/app/f1ce4c7f611085d1
     auto it = w_b_pt.begin();
     for (auto& param : tmlp.parameters()) {
@@ -426,8 +487,41 @@ TEST_CASE("MLP matches libtorch", "[mlp]") {
     }
     std::println("--------------------------");
 
-    tout = current_output; // Final output
+    //tout = current_output; // Final output
+    tout.backward();
+    auto torch_grads = read_gradients_in_custom_order(tmlp);
+    std::println("{} Pytorch gradients:", torch_grads.size());
+    for (auto& g : torch_grads) {
+        std::print("{:.3f} ", g);
+    }
+    std::println();
+
+    out[0].backward();
+    for (auto&& v : mlp.parameters()) {
+        std::print("{:.3f} ", v.grad());
+    }
+    std::println();
 
     REQUIRE_THAT(out[0].data(), WithinAbs(tout.data().item<double>(), ABS_TOLERANCE));
+
+    auto mg_params_stable = mlp.parameters()
+                            | std::views::transform([](const Value& v) { return &v; })
+                            | std::ranges::to<std::vector<const Value*>>();
+
+    //auto itp = mlp.parameters().begin();
+
+    for (int i = 0; i < num_params; ++i) {
+        //const auto& mg_param = *itp;
+        const Value& mg_param = *mg_params_stable[i];
+        double mg_grad = mg_param.grad();
+        INFO("Parameter index: " << i
+                                 << " | micrograd grad: " << mg_grad
+                                 << " | torch grad: "     << torch_grads[i]);
+
+        //std::print("{} ", mg_grad);
+        //REQUIRE_THAT(mg_param.grad(), WithinAbs(torch_grads[i], ABS_TOLERANCE));
+        REQUIRE_THAT(mg_grad, WithinAbs(torch_grads[i], ABS_TOLERANCE));
+    }
+
 
 }

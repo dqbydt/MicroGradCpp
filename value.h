@@ -95,14 +95,6 @@ private:
         // Build topo graph starting at this node
         build_topo(root);
 
-        std::println("Topo sorted graph:");
-        for (auto& _pv : topo_cache) {
-            std::println("_Value(data={}{:.3f}, grad={}{:.3f}, label=\"{}\", op=\"{}\")",
-                         sgnspc(_pv->data), _pv->data,
-                         sgnspc(_pv->grad), _pv->grad, _pv->label, _pv->op);
-        }
-        std::println("------------------");
-
         // Reset visited nodes - this enables re-computation of topo sort on a diff node.
         // Note special case auto* "deduce-as-pointer" syntax in range-for loop!
         for (auto* _pv : visited) _pv->visited = false;
@@ -182,6 +174,18 @@ public:
         // pointer to a data member, its defined behavior is to access that member, not call it.
         // Workaround is to use a lambda to call the member lambda:
         std::ranges::for_each(std::views::reverse(topo_cache), [](auto* node) { node->_backward(); });
+    }
+
+    void print_graph() {
+        auto& topo_cache = _spv->topo_cache;
+
+        std::println("----Expression graph----");
+        for (auto& _pv : topo_cache) {
+            std::println("_Value(data={}{:.3f}, grad={}{:.3f}, label=\"{}\", op=\"{}\")",
+                         sgnspc(_pv->data), _pv->data,
+                         sgnspc(_pv->grad), _pv->grad, _pv->label, _pv->op);
+        }
+        std::println("-------End Graph--------\n");
     }
 
     // operator<< overload for printing
