@@ -141,6 +141,7 @@ public:
         for (auto i : std::views::iota(0u, nouts.size())) {
             std::println("MLP: Creating Layer({},{})", layer_sizes[i], layer_sizes[i+1]);
             layers.emplace_back(Layer{layer_sizes[i], layer_sizes[i+1]});
+            num_params_ += layer_sizes[i+1]*layer_sizes[i] + layer_sizes[i+1];
         }
     }
 
@@ -168,8 +169,10 @@ public:
                | std::views::join;
     }
 
+    size_t num_params() const { return num_params_; }
 //private:
     std::vector<Layer> layers;
+    size_t num_params_ {};
 };
 
 #endif // NN_H

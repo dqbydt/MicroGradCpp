@@ -325,40 +325,43 @@ std::vector<double> read_gradients_in_custom_order(
     return grad_b_custom_flat;
 }
 
-auto make_neuron_major(const MLP& mlp, const std::array<double, 41>& w_b)
+auto make_neuron_major(const MLP& mlp, std::span<const double> w_b)
 {
-    std::println("make_neuron input array: {}", w_b);
+    std::println("\nmake_neuron input array: {}", w_b);
 
     // Output swizzled vec
     std::vector<double> wb_swizzled;
-    auto num_params = std::ranges::distance(mlp.parameters());
-    wb_swizzled.reserve(num_params);
+    wb_swizzled.reserve(mlp.num_params());
 
-    int lparams_cnt = 0;
+    // Keep shrinking view of init data on every iteration
+    auto remaining_data = w_b;
+
     for (auto&& [i,l] : mlp.layers | std::views::enumerate) {
 
-        auto num_lwts       = l.nout()*l.nin();
-        auto num_lbiases    = l.nout();
-        auto num_lparams    = num_lwts + num_lbiases;
+        const auto num_lwts     = l.nout() * l.nin();
+        const auto num_lbiases  = l.nout();
+        const auto num_lparams  = num_lwts + num_lbiases;
 
-        // Extract the subset of weights/biases for this layer
-        auto lparams = w_b | std::views::drop(lparams_cnt) | std::views::take(num_lparams);
-        std::println("Layer {}: lparams = {}", i, lparams);
+        // 1. Slice out this layer's data from the front
+        auto lwts       = remaining_data | std::views::take(num_lwts);
+        auto lbiases    = remaining_data | std::views::drop(num_lwts) | std::views::take(num_lbiases);
 
-        // Now split lparams into lwts and lbiases
-        auto lwts       = lparams | std::views::take(num_lwts);
-        auto lbiases    = lparams | std::views::drop(num_lwts);
+        // 2. Swizzle: Zip chunks of weights with their corresponding bias
+        // Using zip allows us to avoid manual indexing into lbiases
+        auto neuron_data = std::views::zip(
+                lwts | std::views::chunk(l.nin()),
+                lbiases
+            );
 
-        // Now chunk out lwts and insert lbias values in between
-        for (auto&& [chidx, lwchunk] : lwts | std::views::chunk(l.nin()) | std::views::enumerate) {
-            std::println("Layer {} chunk = {}: wts = {} bias = {}", i, chidx, lwchunk, lbiases[chidx]);
-            wb_swizzled.append_range(lwchunk);
-            wb_swizzled.push_back(lbiases[chidx]);
+        for (auto&& [wts_chunk, bias] : neuron_data) {
+            wb_swizzled.append_range(wts_chunk);
+            wb_swizzled.push_back(bias);
         }
 
-        std::println("After layer {} wb_swizzled = {}", i, wb_swizzled);
+        // 3. Advance the "window" to the next layer
+        remaining_data = remaining_data | std::views::drop(num_lparams);
 
-        lparams_cnt += num_lparams;
+        std::println("After layer {} wb_swizzled = {}", i, wb_swizzled);
     }
 
     return wb_swizzled;
@@ -368,42 +371,49 @@ auto make_layer_major(const MLP& mlp)
 {
     // Output swizzled vec
     std::vector<double> lm_params;
-    auto num_params = std::ranges::distance(mlp.parameters());
-    lm_params.reserve(num_params);
+    lm_params.reserve(mlp.num_params());
 
-    // Linear neuron-major vec of param data
-    auto mg_params = mlp.parameters()
-                            | std::views::transform([](const Value& v) { return v.data(); })
-                            | std::ranges::to<std::vector>();
+    // Linear neuron-major view of param data. Gemini suggested
+    // keeping this as a view (no materialization) but that results in the
+    // same strange segfault seen previously. HAVE to materialize to
+    // work around.
+    auto mg_data_vec = mlp.parameters()
+                        | std::views::transform([](const Value& v) { return v.data(); })
+                        | std::ranges::to<std::vector>();
 
-    std::println("\nmake_layer_major():");
-    std::println("MLP params: {}", mg_params);
+    // We use a subrange to "consume" the view as we iterate through layers
+    // This MUST be a subrange, note! views::all returns a ref_view which
+    // cannot be assigned to itself after a take.
+    // XXX     auto remaining_data = std::views::all(mg_data_vec);
+    auto remaining_data = std::ranges::subrange(mg_data_vec);
 
-    int lparams_cnt = 0;
     for (auto&& [i,l] : mlp.layers | std::views::enumerate) {
 
-        auto num_lwts       = l.nout()*l.nin();
-        auto num_lbiases    = l.nout();
-        auto num_lparams    = num_lwts + num_lbiases;
+        const auto num_lwts       = l.nout() * l.nin();
+        const auto num_lbiases    = l.nout();
+        const auto num_lparams    = num_lwts + num_lbiases;
 
-        // Extract the subset of weights/biases for this layer
-        auto lparams = mg_params | std::views::drop(lparams_cnt) | std::views::take(num_lparams);
-        std::println("Layer {}: lparams = {}", i, lparams);
+        // Slice out exactly what this layer needs
+        auto lparams = remaining_data | std::views::take(num_lparams);
 
-        std::vector<double> lwts;       lwts.reserve(num_lwts);
-        std::vector<double> lbiases;    lbiases.reserve(num_lbiases);
+        // 2. Chunk by (nin + 1) to isolate each neuron's [weights..., bias]
+        auto neurons = lparams | std::views::chunk(l.nin() + 1);
 
-        for (auto&& nparams : lparams | std::views::chunk(l.nin()+1)) {
-            std::println("Neuron: {}", nparams);
-            lwts.append_range   (nparams | std::views::take(l.nin()));
-            lbiases.append_range(nparams | std::views::drop(l.nin()));
+        // 3. PyTorch Layout: All weights for the layer, THEN all biases
+        // First pass: Append all weight chunks
+        for (auto neuron : neurons) {
+            lm_params.append_range(neuron | std::views::take(l.nin()));
         }
 
-        lm_params.append_range(lwts);
-        lm_params.append_range(lbiases);
-        std::println("Layer {}: lm_params = {}", i, lm_params);
+        // Second pass: Append all bias elements
+        for (auto neuron : neurons) {
+            lm_params.append_range(neuron | std::views::drop(l.nin()));
+        }
 
-        lparams_cnt += num_lparams;
+        // 4. Advance the "window" for the next layer
+        remaining_data = remaining_data | std::views::drop(num_lparams);
+
+        std::println("Layer {}: lm_params = {}", i, lm_params);
     }
 
     return lm_params;
@@ -426,7 +436,7 @@ TEST_CASE("MLP matches libtorch", "[mlp]") {
     //std::ranges::generate(w_b, rand_uniform_m1_1);  // Populates the array by calling rand_uniform repeatedly
 
     MLP mlp{3, {4,4,1}};
-    auto num_params = std::ranges::distance(mlp.parameters());
+    auto num_params = mlp.num_params();
     std::println("# of params = {}", num_params);
 
     auto out = mlp({2.0, 3.0, -1.0});
