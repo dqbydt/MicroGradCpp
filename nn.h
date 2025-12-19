@@ -85,7 +85,7 @@ private:
 // each N has a single output).
 class Layer {
 public:
-    explicit Layer(size_t nin, size_t nout) {
+    explicit Layer(size_t nin, size_t nout) : nin_(nin), nout_(nout) {
         neurons.reserve(nout);
         for ([[maybe_unused]] auto _ : std::views::iota(0u, nout)) {
             neurons.emplace_back(Neuron{nin});
@@ -116,8 +116,13 @@ public:
                | std::views::join;
     }
 
-//private:
+    size_t nin()    const { return nin_;  }
+    size_t nout()   const { return nout_; }
+
+private:
     std::vector<Neuron> neurons;
+    size_t nin_;
+    size_t nout_;
 };
 
 
@@ -142,16 +147,8 @@ public:
     // Iterate over each layer successively, feeding in output of
     // last into input of next
     auto operator()(std::ranges::input_range auto&& x) const {
-        std::println("Inputs:");
-        std::ranges::for_each(x, [](auto& v) { std::cout << v; } );
-        std::println();
-
-        int l = 1;
         for (auto& layer : layers) {
             x = layer(x) | std::ranges::to<std::vector<Value>>();
-            std::println("Layer {} outputs:", l++);
-            std::ranges::for_each(x, [](auto& v) { std::cout << v; } );
-            std::println();
         }
         return x;
     }

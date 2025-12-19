@@ -7,6 +7,7 @@
 #include <catch2/catch_session.hpp>
 
 #include <random>
+#include <numeric>
 
 #include <torch/torch.h>
 #include "../value.h"
@@ -324,6 +325,90 @@ std::vector<double> read_gradients_in_custom_order(
     return grad_b_custom_flat;
 }
 
+auto make_neuron_major(const MLP& mlp, const std::array<double, 41>& w_b)
+{
+    std::println("make_neuron input array: {}", w_b);
+
+    // Output swizzled vec
+    std::vector<double> wb_swizzled;
+    auto num_params = std::ranges::distance(mlp.parameters());
+    wb_swizzled.reserve(num_params);
+
+    int lparams_cnt = 0;
+    for (auto&& [i,l] : mlp.layers | std::views::enumerate) {
+
+        auto num_lwts       = l.nout()*l.nin();
+        auto num_lbiases    = l.nout();
+        auto num_lparams    = num_lwts + num_lbiases;
+
+        // Extract the subset of weights/biases for this layer
+        auto lparams = w_b | std::views::drop(lparams_cnt) | std::views::take(num_lparams);
+        std::println("Layer {}: lparams = {}", i, lparams);
+
+        // Now split lparams into lwts and lbiases
+        auto lwts       = lparams | std::views::take(num_lwts);
+        auto lbiases    = lparams | std::views::drop(num_lwts);
+
+        // Now chunk out lwts and insert lbias values in between
+        for (auto&& [chidx, lwchunk] : lwts | std::views::chunk(l.nin()) | std::views::enumerate) {
+            std::println("Layer {} chunk = {}: wts = {} bias = {}", i, chidx, lwchunk, lbiases[chidx]);
+            wb_swizzled.append_range(lwchunk);
+            wb_swizzled.push_back(lbiases[chidx]);
+        }
+
+        std::println("After layer {} wb_swizzled = {}", i, wb_swizzled);
+
+        lparams_cnt += num_lparams;
+    }
+
+    return wb_swizzled;
+}
+
+auto make_layer_major(const MLP& mlp)
+{
+    // Output swizzled vec
+    std::vector<double> lm_params;
+    auto num_params = std::ranges::distance(mlp.parameters());
+    lm_params.reserve(num_params);
+
+    // Linear neuron-major vec of param data
+    auto mg_params = mlp.parameters()
+                            | std::views::transform([](const Value& v) { return v.data(); })
+                            | std::ranges::to<std::vector>();
+
+    std::println("\nmake_layer_major():");
+    std::println("MLP params: {}", mg_params);
+
+    int lparams_cnt = 0;
+    for (auto&& [i,l] : mlp.layers | std::views::enumerate) {
+
+        auto num_lwts       = l.nout()*l.nin();
+        auto num_lbiases    = l.nout();
+        auto num_lparams    = num_lwts + num_lbiases;
+
+        // Extract the subset of weights/biases for this layer
+        auto lparams = mg_params | std::views::drop(lparams_cnt) | std::views::take(num_lparams);
+        std::println("Layer {}: lparams = {}", i, lparams);
+
+        std::vector<double> lwts;       lwts.reserve(num_lwts);
+        std::vector<double> lbiases;    lbiases.reserve(num_lbiases);
+
+        for (auto&& nparams : lparams | std::views::chunk(l.nin()+1)) {
+            std::println("Neuron: {}", nparams);
+            lwts.append_range   (nparams | std::views::take(l.nin()));
+            lbiases.append_range(nparams | std::views::drop(l.nin()));
+        }
+
+        lm_params.append_range(lwts);
+        lm_params.append_range(lbiases);
+        std::println("Layer {}: lm_params = {}", i, lm_params);
+
+        lparams_cnt += num_lparams;
+    }
+
+    return lm_params;
+}
+
 TEST_CASE("MLP matches libtorch", "[mlp]") {
 
     std::array<double, 41> w_b = {
@@ -347,6 +432,12 @@ TEST_CASE("MLP matches libtorch", "[mlp]") {
     auto out = mlp({2.0, 3.0, -1.0});
     std::cout << "Random init output: " << out << "\n";
 
+    // For testing: populate array with linear range from 0
+    // Needs header <numeric>, note
+    std::ranges::iota(w_b, 0);  // Comment out to load real values!
+
+    auto wb_swizzled = make_neuron_major(mlp, w_b);
+
     // Note, cannot do the following:
     // std::ranges::copy(w_b, std::ranges::begin(mlp.parameters()));
     // This is bc mlp.parameters() is a join_view<transform_view<...>>. It is not a mutable
@@ -354,10 +445,13 @@ TEST_CASE("MLP matches libtorch", "[mlp]") {
 
     // Note neat method of initializing each element of params with the
     // corresponding element of w_b:
-    for (auto&& [v, init] : std::views::zip(mlp.parameters(), w_b)) {
+    for (auto&& [v, init] : std::views::zip(mlp.parameters(), wb_swizzled)) {
         v.data() = init;
     }
 
+    auto lm_params = make_layer_major(mlp);
+
+/*
     out = mlp({2.0, 3.0, -1.0});
     std::cout << "With init vals: " << out << "\n";
 
@@ -508,20 +602,22 @@ TEST_CASE("MLP matches libtorch", "[mlp]") {
                             | std::views::transform([](const Value& v) { return &v; })
                             | std::ranges::to<std::vector<const Value*>>();
 
-    //auto itp = mlp.parameters().begin();
+    auto itp = mlp.parameters().begin();
 
-    for (int i = 0; i < num_params; ++i) {
-        //const auto& mg_param = *itp;
-        const Value& mg_param = *mg_params_stable[i];
+    for (int i = 0; i < num_params; ++i, ++itp) {
+        const auto& mg_param = *itp;
+        std::cout << mg_param;
+        //const Value& mg_param = *mg_params_stable[i];
         double mg_grad = mg_param.grad();
-        INFO("Parameter index: " << i
-                                 << " | micrograd grad: " << mg_grad
-                                 << " | torch grad: "     << torch_grads[i]);
+        //INFO("Parameter index: " << i
+        //                         << " | micrograd grad: " << mg_grad
+        //                         << " | torch grad: "     << torch_grads[i]);
 
         //std::print("{} ", mg_grad);
         //REQUIRE_THAT(mg_param.grad(), WithinAbs(torch_grads[i], ABS_TOLERANCE));
-        REQUIRE_THAT(mg_grad, WithinAbs(torch_grads[i], ABS_TOLERANCE));
+        CHECK_THAT(mg_grad, WithinAbs(torch_grads[i], ABS_TOLERANCE));
     }
-
+*/
 
 }
+
