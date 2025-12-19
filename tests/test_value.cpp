@@ -3,6 +3,7 @@
 #define CATCH_CONFIG_MAIN
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/catch_get_random_seed.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <catch2/catch_session.hpp>
 
@@ -25,8 +26,10 @@ constexpr double ABS_TOLERANCE = 1e-6;
 }();
 
 inline double rand_uniform_m1_1() {
-    // One RNG per thread
-    static thread_local std::mt19937 gen(std::random_device{}());
+    // One RNG per thread. Use the Catch seed in mt19937 for reproducibility
+    // instead of std::random_device. To rerun with specific seed, pass it
+    // on the cmd line thus: ./mgcpp_tests --rng-seed 2435590922
+    static thread_local std::mt19937 gen(Catch::getSeed());
     static thread_local std::uniform_real_distribution<double> urd(-1.0, 1.0);
     return urd(gen);
 }
