@@ -289,7 +289,10 @@ TEST_CASE("MLP matches libtorch", "[mlp]") {
     // Run fwd pass on a test input
     out = mlp({2.0, 3.0, -1.0});
 
-    // Run backward pass; collect gradients in layer-major order
+    // Run backward pass; collect gradients in layer-major order.
+    // Remember, MLP::operator() returns
+    // x = layer(x) | std::ranges::to<std::vector<Value>>();
+    // which is a materialized vector. So "out" above is a vector<Value>.
     out[0].backward();
     auto mg_grads = make_layer_major(mlp);
 

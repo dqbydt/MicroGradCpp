@@ -6,6 +6,13 @@
 #include "value.h"
 #include "nn.h"
 
+namespace misc {
+
+template <class T>
+inline T sqr(T x) { return x*x; }
+
+}
+
 int main()
 {
     // inputs x1, x2
@@ -75,7 +82,33 @@ int main()
         std::cout << "MLP output: " << v << "\n";
     }
 
-    std::println("# of params = {}", std::ranges::distance(mlp.parameters()));
+    std::println("# of params = {}", mlp.num_params());
+
+    // auto does not work here: the outer {} deduce init_list, but the
+    // inner elements are also braced-init-lists (which have no type).
+    // So the only way around is explicit typing.
+    std::initializer_list<std::initializer_list<double>> xs = {
+        {2.0,  3.0, -1.0},
+        {3.0, -1.0,  0.5},
+        {0.5,  1.0,  1.0},
+        {1.0,  1.0, -1.0},
+    };
+
+    auto ypred = xs | std::views::transform([&](auto& x){ return mlp(x)[0].data(); });
+
+    for (const auto& v : ypred) {
+        std::cout << "MLP ypred: " << v << "\n";
+    }
+
+    std::initializer_list<double> ys = { 1.0, -1.0, -1.0, 1.0 };
+    auto yloss = std::views::zip_transform(
+                    [](auto ygt, auto yout){ return misc::sqr(yout-ygt); },
+                    ys, ypred);
+
+    for (const auto& v : yloss) {
+        std::cout << "MLP yloss: " << v << "\n";
+    }
+
 
     return 0;
 }
