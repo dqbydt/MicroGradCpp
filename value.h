@@ -12,6 +12,8 @@
 #include <functional>
 #include <ranges>
 
+#include "misc.h"
+
 struct _Value;
 using _vtsp = std::tuple<std::shared_ptr<_Value>, std::shared_ptr<_Value>>;
 
@@ -65,9 +67,6 @@ private:
     // not the actual stored lambda! So setting it to a specifc fn does nothing;
     // the _spv._backward member isn't changed.
     auto& _backward()   const { return _spv->_backward; }   // Lambda to backprop grads
-
-    // Insert space before +ve vals for pretty-printing
-    static constexpr const char* sgnspc(double d) { return (d >= 0)? " ":""; };
 
     void topo_sort() {
 
@@ -182,15 +181,15 @@ public:
         std::println("----Expression graph----");
         for (auto& _pv : topo_cache) {
             std::println("_Value(data={}{:.3f}, grad={}{:.3f}, label=\"{}\", op=\"{}\")",
-                         sgnspc(_pv->data), _pv->data,
-                         sgnspc(_pv->grad), _pv->grad, _pv->label, _pv->op);
+                         misc::sgnspc(_pv->data), _pv->data,
+                         misc::sgnspc(_pv->grad), _pv->grad, _pv->label, _pv->op);
         }
-        std::println("-------End Graph--------\n");
+        std::println("-------End Graph (Depth: {})--------\n", topo_cache.size());
     }
 
     // operator<< overload for printing
     friend std::ostream& operator<<(std::ostream& os, const Value& v) {
-        auto d_sgnspc = v.sgnspc(v.data());   auto g_sgnspc = v.sgnspc(v.grad());
+        auto d_sgnspc = misc::sgnspc(v.data());   auto g_sgnspc = misc::sgnspc(v.grad());
         os << std::format("Value(data={}{:.3f}, grad={}{:.3f}, label=\"{}\")\n",
                           d_sgnspc, v.data(), g_sgnspc, v.grad(), v.label());
         return os;
@@ -312,5 +311,23 @@ Value operator*(double d, const Value& v) { return v*d; }
 Value operator+(double d, const Value& v) { return v+d; }
 Value operator/(double d, const Value& v) { return d*v.pow(-1.0); }
 
+// Formatter for output with std::println
+// https://gemini.google.com/app/5ad9f365e93b4ae2
+template <typename CharT>
+struct std::formatter<Value, CharT> {
+    // 1. Explicitly make parse constexpr and return the iterator
+    // This is required for the compile-time format string check.
+    constexpr auto parse(std::basic_format_parse_context<CharT>& ctx) {
+        return ctx.begin();
+    }
+
+    // 2. Use format_to for efficiency and range compatibility
+    auto format(const Value& v, auto& ctx) const {
+        auto d_sgnspc = misc::sgnspc(v.data());   auto g_sgnspc = misc::sgnspc(v.grad());
+        return std::format_to(ctx.out(),
+                              "Value(data={}{:.3f}, grad={}{:.3f}, label=\"{}\")",
+                              d_sgnspc, v.data(), g_sgnspc, v.grad(), v.label());
+    }
+};
 
 #endif // VALUE_H

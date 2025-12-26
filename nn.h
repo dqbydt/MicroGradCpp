@@ -92,16 +92,18 @@ public:
         }
     }
 
+    // https://gemini.google.com/app/5ad9f365e93b4ae2
     // operator() for L calls this L with inputs x, which applies the
-    // input to each N in this layer. There are nout N's, so this will
-    // produce a lazy transform_view of nout output Values which are the
-    // result of calling each N with the inputs x. This does not actually
-    // perform the operation! That will be done only when the Values are
-    // extracted/materialized.
-    // NOTE: capturing inputs by ref, so inputs need to live at least
-    // as long as the Layer.
+    // input to each N in this layer. This must NOT be a lazy
+    // transform_view; that results in dangling refs! We are capturing
+    // x by ref in the transform() fn. If we iterate later, the transform
+    // lambda tries to access x, which was a local param of operator()
+    // that has long since returned. See the GG chat.
+    // The solution is to materialize the output of the layer immediately.
     auto operator()(std::ranges::input_range auto&& x) const {
-        return neurons | std::views::transform([&](const auto& n) { return n(x); });
+        return neurons
+                | std::views::transform([&](const auto& n) { return n(x); })
+                | std::ranges::to<std::vector<Value>>();
     }
 
     // Same overload as for Neuron to allow init_list to be passed
@@ -149,17 +151,25 @@ public:
     // last into input of next
     auto operator()(std::ranges::input_range auto&& x) const {
         for (auto& layer : layers) {
-            x = layer(x) | std::ranges::to<std::vector<Value>>();
+            x = layer(x);
         }
         return x;
     }
 
-    // Here we must convert the init_list to vec<Value> to enable it to be
-    // used in the input_range operator() above
-    auto operator()(std::initializer_list<double> ild) const {
-        return operator()(std::vector(ild)
+    // Here we must convert the vec<double> to vec<Value> to enable it to be
+    // used in the input_range operator() above.
+    auto operator()(std::vector<double> vd) const {
+        return operator()(vd
                           | std::views::transform([](auto d) { return Value{d}; })
                           | std::ranges::to<std::vector<Value>>());
+    }
+
+    // This is still required when iterating over an init_list<init_list>.
+    // For reasons unclear to me the implicit conversion to vector<double> to pick
+    // the second overload above does not happen there. See "user defined conversion"
+    // here: https://gemini.google.com/app/5ad9f365e93b4ae2
+    auto operator()(std::initializer_list<double> ild) const {
+        return operator()(std::vector(ild));
     }
 
     // parameters() — flat view of all Layers' params

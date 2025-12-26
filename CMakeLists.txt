@@ -13,6 +13,7 @@ target_link_libraries(pch_obj PUBLIC "${TORCH_LIBRARIES}")
 # === Main app ===
 add_executable(MicroGradCpp main.cpp value.h
     nn.h
+    misc.h
 )
 target_link_libraries(MicroGradCpp PRIVATE pch_obj "${TORCH_LIBRARIES}")
 # Apply PCH to the real executable
@@ -29,7 +30,8 @@ FetchContent_MakeAvailable(Catch2)
 
 # === Tests ===
 add_executable(mgcpp_tests tests/test_value.cpp value.h
-    tests/ptnn.h)
+    tests/ptnn.h
+    nn.h)
 target_link_libraries(mgcpp_tests PRIVATE pch_obj Catch2::Catch2WithMain "${TORCH_LIBRARIES}")
 # Apply PCH on the test executable also
 target_precompile_headers(mgcpp_tests PRIVATE <torch/torch.h>)
