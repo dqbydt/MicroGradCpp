@@ -93,44 +93,51 @@ int main()
         {1.0,  1.0, -1.0},
     };
 
-    // MLP output for each input is a vector<Value> (one Value corresponding
-    // to each output Neuron). For a set of inputs, the output is a
-    // vector<vector<Value>>.
-    auto ypred = xs
-                 | std::views::transform([&](auto& x){ return mlp(x); })
-                 | std::ranges::to<std::vector>();
-
-    for (const auto& valvec : ypred) {
-        std::println("MLP ypred: {}", valvec);
-    }
-
-    // Get the first elements of the output vecs (since we have a single op N for MLP(4,4,1))
-    // This is now a vector<Value>, with each elt corresponding to the MLP output
-    // for each input. Need a std::move around x[0] bc of deleted Value copy.
-    auto ypred0 = ypred
-                  | std::views::transform([](auto& x) { return std::move(x[0]); } )
-                  | std::ranges::to<std::vector>();
-
+    // This is the set of desired outputs (the ground truth)
     std::array ys = { 1.0, -1.0, -1.0, 1.0 };
-    // Calculate the square loss (this is still a lazy view, note!)
-    // Also this fails to compile unless you have a ref on the yout, bc
-    // copies have been disabled on the Value class.
-    auto yloss = std::views::zip_transform(
-                    [](auto ygt, auto& yout){ return misc::sqr(yout-ygt); },
-                    ys,
-                    ypred0);
 
-    for (const auto& v : yloss) {
-        std::println("MLP yloss: {}", v);
+    std::vector<Value> ypred;
+
+    for (auto i : py::range(15)) {
+
+        // 1. Forward pass:
+        // ----------------
+        // MLP output for each input is a vector<Value> (one Value corresponding
+        // to each output Neuron). For a set of inputs, the output is a
+        // vector<vector<Value>>. We are picking out the 0th element for our
+        // single-output MLP(4,4,1), so ypred is a vector<Value>.
+        ypred = xs
+                | std::views::transform([&](auto& x){ return std::move(mlp(x)[0]); })
+                | std::ranges::to<std::vector>();
+
+        // Calculate the square loss (this is still a lazy view, note!)
+        // Also this fails to compile unless you have a ref on the yout, bc
+        // copies have been disabled on the Value class.
+        auto yloss = std::views::zip_transform(
+            [](auto ygt, auto& yout){ return misc::sqr(yout-ygt); },
+            ys,
+            ypred);
+
+        // Finally collapse yloss into the total scalar loss. This "loss" Value
+        // object carries the entire history of the forward pass.
+        Value loss = std::ranges::fold_left(yloss, Value{0.0}, std::plus<>{});
+
+        // 2. Backward pass:
+        // ------------------
+        loss.backward();
+
+        // 3. Param update:
+        // ----------------
+        for (const auto& p : mlp.parameters()) {
+            p.data() += -0.01*p.grad();
+        }
+
+        std::println("Epoch {}: loss = {:.3f}", i, loss.data());
     }
 
-    // Finally collapse yloss into the total scalar loss. This "loss" Value
-    // object carries the entire history of the forward pass.
-    Value loss = std::ranges::fold_left(yloss, Value{0.0}, std::plus<>{});
-    std::println("\nTotal loss = {}\n", loss);
-
-    loss.backward();
-    loss.print_graph();
+    // Note the double colon format spec! Reqd because you need to use a colon
+    // for the range, then a colon for the elements
+    std::println("Final ypred vals: {::.3f}", ypred | std::views::transform([](const auto& v) { return v.data();} ));
 
     return 0;
 }
