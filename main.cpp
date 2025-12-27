@@ -98,7 +98,7 @@ int main()
 
     std::vector<Value> ypred;
 
-    for (auto i : py::range(15)) {
+    for (auto i : py::range(20)) {
 
         // 1. Forward pass:
         // ----------------
@@ -122,14 +122,19 @@ int main()
         // object carries the entire history of the forward pass.
         Value loss = std::ranges::fold_left(yloss, Value{0.0}, std::plus<>{});
 
-        // 2. Backward pass:
+        // 2. Reset grads
+        for (const auto& p : mlp.parameters()) {
+            p.grad() = 0.0;
+        }
+
+        // 3. Backward pass:
         // ------------------
         loss.backward();
 
-        // 3. Param update:
+        // 4. Param update:
         // ----------------
         for (const auto& p : mlp.parameters()) {
-            p.data() += -0.01*p.grad();
+            p.data() += -0.1*p.grad();
         }
 
         std::println("Epoch {}: loss = {:.3f}", i, loss.data());
@@ -137,7 +142,7 @@ int main()
 
     // Note the double colon format spec! Reqd because you need to use a colon
     // for the range, then a colon for the elements
-    std::println("Final ypred vals: {::.3f}", ypred | std::views::transform([](const auto& v) { return v.data();} ));
+    std::println("\nFinal ypred vals: {::.3f}", ypred | std::views::transform([](const auto& v) { return v.data();} ));
 
     return 0;
 }

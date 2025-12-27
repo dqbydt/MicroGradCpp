@@ -53,7 +53,9 @@ namespace py {
     }
 
     // 4. enumerate -- Returns a view of tuples: {index, value}
-    // Use thus: for (auto [i, letter] : py::enumerate(alphabet))
+    // Use thus: for (auto&& [i, letter] : py::enumerate(alphabet))
+    // Search the GG chat for viewable_range to see why this is the only
+    // way to specify this template:
     template<std::ranges::viewable_range R>
     auto enumerate(R&& r) {
         return std::views::enumerate(std::forward<R>(r));
