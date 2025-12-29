@@ -85,8 +85,8 @@ int main()
     // HUH! Looks like init_list<init_list> does not guarantee lifetime
     // for the inner list! See https://gemini.google.com/app/db7f033f1290bccf
     // However in all testing it seems to stay alive with no ASan violations.
-    std::initializer_list<std::initializer_list<double>> xs = {
-    //std::vector<std::vector<double>> xs = {
+    //std::initializer_list<std::initializer_list<double>> xs = {
+    std::vector<std::vector<double>> xs = {
         {2.0,  3.0, -1.0},
         {3.0, -1.0,  0.5},
         {0.5,  1.0,  1.0},
@@ -95,6 +95,41 @@ int main()
 
     // This is the set of desired outputs (the ground truth)
     std::array ys = { 1.0, -1.0, -1.0, 1.0 };
+
+    auto row_nums = py::range(xs.size());
+    auto col_nums = py::range(xs[0].size());
+    auto ij = std::views::cartesian_product(row_nums, col_nums);
+    std::println("Input array row/cols ij = {}", ij);
+    std::cout.flush();
+
+    // Sacrificial labeled input Value vec<vec>. We move this into
+    // the MLP to compile the graph with input nodes
+    std::vector<std::vector<Value>> xs_Vals(xs.size());
+
+    for (const auto& [i, row] : py::enumerate(xs)) {
+        xs_Vals[i].reserve(row.size());
+        for (const auto& [j, col] : py::enumerate(row)) {
+            xs_Vals[i].emplace_back(Value{xs[i][j], std::format("ip_{}_{}", i, j)});
+        }
+    }
+
+    std::println("{}", xs); std::cout.flush();
+    std::println("{}", xs_Vals); std::cout.flush();
+
+    auto init_ypred = xs_Vals
+                      | std::views::transform([&](auto& x){ return std::move(mlp(std::move(x))[0]); })
+                      | std::ranges::to<std::vector>();
+
+    auto init_yloss = std::views::zip_transform(
+        [](auto ygt, auto& yout){ return misc::sqr(yout-ygt); },
+        ys,
+        init_ypred);
+
+    Value init_loss = std::ranges::fold_left(init_yloss, Value{0.0}, std::plus<>{});
+
+    init_loss.compile();
+    std::println("Static graph:");
+    init_loss.print_graph();
 
     std::vector<Value> ypred;
 

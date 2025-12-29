@@ -143,7 +143,6 @@ public:
         } else {
             //std::println("Moved-from-Value dtor");
         }
-        std::cout.flush();
     }
 
     // To be called after building the graph via a dummy fwd pass
