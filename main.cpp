@@ -162,7 +162,7 @@ int main()
 
         // Note the double colon format spec! Reqd because you need to use a colon
         // for the range, then a colon for the elements
-        std::println("Epoch {}: loss = {:.3f}, ypred: {::.3f}", i, loss.data(), ypred_datav);
+        std::println("Epoch {:3}: loss = {:.3f}, ypred: {::.3f}", i, loss.data(), ypred_datav);
     }
 
     return 0;

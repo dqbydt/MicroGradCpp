@@ -37,6 +37,8 @@ struct _Value {
     // nodes without impacting the ownership (and incurring the atomic refcount
     // inc/dec).
     std::vector<const _Value*> topo_cache;
+    // Op nodes filtered from the topo_cache for optimizing fwd pass
+    std::vector<const _Value*> ops_cache;
     // Input nodes filtered from the topo_cache
     std::vector<const _Value*> inputs;
 
@@ -108,6 +110,24 @@ private:
         // Note special case auto* "deduce-as-pointer" syntax in range-for loop!
         for (auto* _pv : visited) _pv->visited = false;
     }
+
+
+    // Create an "ops" vec to filter out the op nodes from the topo_cache graph.
+    // This is the only subset needed to run a fwd pass in subsequent iterations;
+    // we need not iterate over the topo_cache and expend the cycles to test
+    // for !op.empty() every time.
+    void filter_ops() {
+        // Alias names for semantic convenience
+        auto* root = _spv.get();
+        auto& topo_cache = root->topo_cache;
+        auto& ops_cache = root->ops_cache;
+
+        // Filter out the nodes that have a non-empty "op" field
+        ops_cache = topo_cache
+                    | std::views::filter([](const auto& node) { return !node->op.empty(); })
+                    | std::ranges::to<std::vector>();
+    }
+
 
     // Create an "inputs" vec to store a sorted list of inputs. This will enable
     // processing a new input batch in future.
@@ -183,6 +203,7 @@ public:
     // To be called after building the graph via a dummy fwd pass
     void compile() {
         topo_sort();
+        filter_ops();
         filter_inputs();
         is_compiled() = true;
     }
@@ -213,11 +234,7 @@ public:
     // Forward pass on compiled graph: just run through the graph and execute
     // all the op nodes. This automatically updates the loss node at the end.
     void forward() {
-        for (auto* _pv : _spv->topo_cache) {
-            if (!_pv->op.empty()) {
-                _pv->_forward();
-            }
-        }
+        for (auto* _pv : _spv->ops_cache) { _pv->_forward(); }
     }
 
     // For a compiled graph, before every backward pass, gradients need to be
@@ -225,7 +242,7 @@ public:
     // graph, where we need to zero out only the parameter nodes (since the
     // rest of the graph gets created anew on every fwd pass).
     void zero_grad() {
-        for (auto* _pv : _spv->topo_cache) const_cast<_Value*>(_pv)->grad = 0.0;
+        for (auto* _pv : _spv->topo_cache) { const_cast<_Value*>(_pv)->grad = 0.0; }
     }
 
     void print_graph() {
