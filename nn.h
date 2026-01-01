@@ -11,7 +11,8 @@ class Neuron {
 public:
     // Creates a Neuron with "nin" inputs, init to random weights and bias
     explicit Neuron(size_t nin) : nin(nin), params(nin+1) {
-        for (auto& p : params) p = Value{misc::rand_uniform_m1_1()};
+        for (auto& p : params) p = Value{misc::rand_uniform_m1_1(), "w"};
+        params.back().label() = "b";
     }
 
     // Allows external injection of w_b's/b for testing/comparison with PyTorch

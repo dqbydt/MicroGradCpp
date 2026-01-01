@@ -96,14 +96,8 @@ int main()
     // This is the set of desired outputs (the ground truth)
     std::array ys = { 1.0, -1.0, -1.0, 1.0 };
 
-    auto row_nums = py::range(xs.size());
-    auto col_nums = py::range(xs[0].size());
-    auto ij = std::views::cartesian_product(row_nums, col_nums);
-    std::println("Input array row/cols ij = {}", ij);
-    std::cout.flush();
-
-    // Sacrificial labeled input Value vec<vec>. We move this into
-    // the MLP to compile the graph with input nodes
+    // Sacrificial labeled input Value vec<vec>. We std::move this into
+    // the MLP to compile the graph with static input nodes
     std::vector<std::vector<Value>> xs_Vals(xs.size());
 
     for (const auto& [i, row] : py::enumerate(xs)) {
@@ -113,54 +107,48 @@ int main()
         }
     }
 
-    std::println("{}", xs); std::cout.flush();
-    std::println("{}", xs_Vals); std::cout.flush();
+    // MLP output for each input is a vector<Value> (one Value corresponding
+    // to each output Neuron). For a set of inputs, the output is a
+    // vector<vector<Value>>. We are picking out the 0th element for our
+    // single-output MLP(4,4,1), so ypred is a vector<Value>.
+    auto ypred = xs_Vals
+                 | std::views::transform([&](auto& x){ return std::move(mlp(std::move(x))[0]); })
+                 | std::ranges::to<std::vector>();
 
-    auto init_ypred = xs_Vals
-                      | std::views::transform([&](auto& x){ return std::move(mlp(std::move(x))[0]); })
-                      | std::ranges::to<std::vector>();
+    // Data view of ypred vector. Because ypred gets baked into the yloss,
+    // which gets baked into the loss, which is the root of the static expression
+    // graph the Value nodes corresponding to ypred continue to stay alive
+    // and can be read in every training epoch.
+    auto ypred_datav = ypred | std::views::transform([](const auto& v) { return v.data();} );
 
-    auto init_yloss = std::views::zip_transform(
-        [](auto ygt, auto& yout){ return misc::sqr(yout-ygt); },
+    // Calculate the square loss (this is still a lazy view, note!)
+    // Also note, this fails to compile unless you have an auto& on the
+    // yout, bc copies have been disabled on the Value class.
+    auto yloss = std::views::zip_transform(
+        [](const auto ygt, const auto& yout){ return misc::sqr(yout-ygt); },
         ys,
-        init_ypred);
+        ypred);
 
-    Value init_loss = std::ranges::fold_left(init_yloss, Value{0.0}, std::plus<>{});
+    // Finally collapse yloss into the total scalar loss. This "loss" Value
+    // object carries the entire history of the forward pass.
+    Value loss = std::ranges::fold_left(yloss, Value{0.0}, std::plus<>{});
+    std::println("init_loss = {}", loss);
 
-    init_loss.compile();
-    std::println("Static graph:");
-    init_loss.print_graph();
-
-    std::vector<Value> ypred;
+    Value& static_graph = loss; // Alias for semantics
+    static_graph.compile();
 
     for (auto i : py::range(20)) {
 
         // 1. Forward pass:
         // ----------------
-        // MLP output for each input is a vector<Value> (one Value corresponding
-        // to each output Neuron). For a set of inputs, the output is a
-        // vector<vector<Value>>. We are picking out the 0th element for our
-        // single-output MLP(4,4,1), so ypred is a vector<Value>.
-        ypred = xs
-                | std::views::transform([&](auto& x){ return std::move(mlp(x)[0]); })
-                | std::ranges::to<std::vector>();
-
-        // Calculate the square loss (this is still a lazy view, note!)
-        // Also this fails to compile unless you have a ref on the yout, bc
-        // copies have been disabled on the Value class.
-        auto yloss = std::views::zip_transform(
-            [](auto ygt, auto& yout){ return misc::sqr(yout-ygt); },
-            ys,
-            ypred);
-
-        // Finally collapse yloss into the total scalar loss. This "loss" Value
-        // object carries the entire history of the forward pass.
-        Value loss = std::ranges::fold_left(yloss, Value{0.0}, std::plus<>{});
+        static_graph.forward();
 
         // 2. Reset grads
-        for (const auto& p : mlp.parameters()) {
-            p.grad() = 0.0;
-        }
+        // --------------
+        // When we build the graph anew every time, only the params stay constant,
+        // and all intermediate nodes are created anew. When we retain the static graph,
+        // grads for _all_ nodes must be zeroed!
+        static_graph.zero_grad();
 
         // 3. Backward pass:
         // ------------------
@@ -172,12 +160,10 @@ int main()
             p.data() += -0.1*p.grad();
         }
 
-        std::println("Epoch {}: loss = {:.3f}", i, loss.data());
+        // Note the double colon format spec! Reqd because you need to use a colon
+        // for the range, then a colon for the elements
+        std::println("Epoch {}: loss = {:.3f}, ypred: {::.3f}", i, loss.data(), ypred_datav);
     }
-
-    // Note the double colon format spec! Reqd because you need to use a colon
-    // for the range, then a colon for the elements
-    std::println("\nFinal ypred vals: {::.3f}", ypred | std::views::transform([](const auto& v) { return v.data();} ));
 
     return 0;
 }

@@ -8,7 +8,6 @@
 #include <catch2/catch_session.hpp>
 
 #include <random>
-#include <numeric>
 
 #include <torch/torch.h>
 #include "../value.h"

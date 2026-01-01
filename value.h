@@ -4,13 +4,16 @@
 #include <iostream>
 #include <print>
 #include <format>
-#include <set>
+#include <unordered_set>
 #include <vector>
 #include <memory>
 #include <tuple>
 #include <cmath>
 #include <functional>
 #include <ranges>
+#include <string>
+#include <string_view>
+#include <algorithm>
 
 #include "misc.h"
 
@@ -26,13 +29,16 @@ struct _Value {
     std::string label   = "";
     bool is_compiled    = false;
 
-    bool visited = false;
+    bool visited        = false;
+
     // Caches the topo sort order the first time backward() is run on this node.
     // Subsequent backward() passes don't need to run the same sort over and over.
     // Note, we use raw ptrs since we strictly just want to access the _Value
     // nodes without impacting the ownership (and incurring the atomic refcount
     // inc/dec).
     std::vector<const _Value*> topo_cache;
+    // Input nodes filtered from the topo_cache
+    std::vector<const _Value*> inputs;
 
     // Empty lambda by default (e.g. for a leaf node, there is nothing
     // to backprop. But in Value::add() for e.g. we are adding this and
@@ -40,21 +46,24 @@ struct _Value {
     // "this" and "other".
     std::function<void()> _backward = [](){};
 
+    // To compute node outputs in static-compiled fwd pass
+    std::function<void()> _forward  = [](){};
+
     // Set of parents of this node
-    std::set<std::shared_ptr<_Value>> _prev;
+    std::unordered_set<std::shared_ptr<_Value>> _prev;
 
     _Value(double d) : data{d} {}   // _prev default-init'd to empty set
 
     _Value(double d, std::string&& label) : data{d}, label{std::move(label)} {}
 
     _Value(double d, _vtsp&& parents, std::string&& op) : data{d}, op{std::move(op)} {
-        auto [p1, p2] = std::move(parents); // p1 and p2 move-ctor'd from the SPs in the tuple
+        auto [p1, p2] = std::move(parents);     // p1 and p2 move-ctor'd from the SPs in the tuple
         _prev = {std::move(p1), std::move(p2)}; // shared_ptrs moved all the way from the temp
     }
 
-    ~_Value() {
-        //std::println("_Value({:.3f}, \"{}\") dtor", data, label);
-    }
+    //~_Value() {
+    //    std::println("_Value({:.3f}, \"{}\") dtor", data, label);
+    //}
 
 };
 
@@ -67,6 +76,7 @@ private:
     // not the actual stored lambda! So setting it to a specifc fn does nothing;
     // the _spv._backward member isn't changed.
     auto& _backward()   const { return _spv->_backward; }   // Lambda to backprop grads
+    auto& _forward()    const { return _spv->_forward;  }   // Lambda to implement static fwd pass
 
     void topo_sort() {
 
@@ -97,6 +107,31 @@ private:
         // Reset visited nodes - this enables re-computation of topo sort on a diff node.
         // Note special case auto* "deduce-as-pointer" syntax in range-for loop!
         for (auto* _pv : visited) _pv->visited = false;
+    }
+
+    // Create an "inputs" vec to store a sorted list of inputs. This will enable
+    // processing a new input batch in future.
+    void filter_inputs() {
+
+        // Alias names for semantic convenience
+        auto* root = _spv.get();
+        auto& topo_cache = root->topo_cache;
+        auto& inputs = root->inputs;
+
+        using namespace std::literals;
+
+        root->inputs = topo_cache
+                       | std::views::filter([](const auto& node) { return node->label.starts_with("ip"sv); })
+                       | std::ranges::to<std::vector>();
+
+        std::ranges::sort(root->inputs, {}, &_Value::label);
+
+        //for (auto* _pv : root->inputs) {
+        //    std::println("_Value(data={}{:.3f}, grad={}{:.3f}, label=\"{}\"",
+        //                 misc::sgnspc(_pv->data), _pv->data,
+        //                 misc::sgnspc(_pv->grad), _pv->grad, _pv->label);
+        //}
+
     }
 
 public:
@@ -137,17 +172,18 @@ public:
 
     // Getters valid only if dying object has not been moved from! Else
     // the _spv is a nullptr!
-    ~Value() {
-        if (_spv) {
-            //std::println("Value({:.3f}, \"{}\") dtor", data(), label());
-        } else {
-            //std::println("Moved-from-Value dtor");
-        }
-    }
+    // ~Value() {
+    //     if (_spv) {
+    //         std::println("Value({:.3f}, \"{}\") dtor", data(), label());
+    //     } else {
+    //         std::println("Moved-from-Value dtor");
+    //     }
+    // }
 
     // To be called after building the graph via a dummy fwd pass
     void compile() {
         topo_sort();
+        filter_inputs();
         is_compiled() = true;
     }
 
@@ -172,6 +208,24 @@ public:
         // pointer to a data member, its defined behavior is to access that member, not call it.
         // Workaround is to use a lambda to call the member lambda:
         std::ranges::for_each(std::views::reverse(topo_cache), [](auto* node) { node->_backward(); });
+    }
+
+    // Forward pass on compiled graph: just run through the graph and execute
+    // all the op nodes. This automatically updates the loss node at the end.
+    void forward() {
+        for (auto* _pv : _spv->topo_cache) {
+            if (!_pv->op.empty()) {
+                _pv->_forward();
+            }
+        }
+    }
+
+    // For a compiled graph, before every backward pass, gradients need to be
+    // zeroed out over ALL the graph nodes. This is in contrast to a dynamic
+    // graph, where we need to zero out only the parameter nodes (since the
+    // rest of the graph gets created anew on every fwd pass).
+    void zero_grad() {
+        for (auto* _pv : _spv->topo_cache) const_cast<_Value*>(_pv)->grad = 0.0;
     }
 
     void print_graph() {
@@ -206,6 +260,14 @@ public:
             _p1->grad += _out->grad;
             _p2->grad += _out->grad;
         };
+
+        // forward() lambdas for fwd pass on compiled graphs
+        out._forward() = [ _p1  = _spv.get(),
+                           _p2  = other._spv.get(),
+                           _out = out._spv.get()](){
+            _out->data = _p1->data + _p2->data;
+        };
+
         return out;
     }
 
@@ -223,6 +285,13 @@ public:
             _p1->grad += _p2->data * _out->grad;
             _p2->grad += _p1->data * _out->grad;
         };
+
+        out._forward() = [ _p1  = _spv.get(),
+                           _p2  = other._spv.get(),
+                           _out = out._spv.get()](){
+            _out->data = _p1->data * _p2->data;
+        };
+
         return out;
     }
 
@@ -246,6 +315,12 @@ public:
                            _out = out._spv.get()](){
             _p1->grad += d * std::pow(x, d-1.0) * _out->grad;
         };
+
+        out._forward() = [_p1  = _spv.get(), d,
+                          _out = out._spv.get()](){
+            _out->data = std::pow(_p1->data, d);
+        };
+
         return out;
     }
 
@@ -262,13 +337,19 @@ public:
                            _out = out._spv.get()](){
             _p1->grad += e_x * _out->grad;
         };
+
+        out._forward() = [_p1  = _spv.get(),
+                          _out = out._spv.get()](){
+            _out->data = std::exp(_p1->data);
+        };
+
         return out;
     }
 
     // tanh squashing fn for output of neuron
     Value tanh() {
         auto x = data();
-        auto th = (std::exp(2*x) - 1)/(std::exp(2*x) + 1);
+        auto th = std::tanh(x);
         // Need to repeat parent twice because Value ctor needs _vtsp which
         // is a tuple of two _Value SPs. Because the SPs are inserted into a set,
         // the repetition is benign.
@@ -278,6 +359,12 @@ public:
                            _out = out._spv.get()](){
             _p1->grad += (1 - th*th) * _out->grad;
         };
+
+        out._forward() = [_p1  = _spv.get(),
+                          _out = out._spv.get()](){
+            _out->data = std::tanh(_p1->data);
+        };
+
         return out;
     }
 
@@ -287,6 +374,11 @@ public:
         out._backward() = [_p1  = _spv.get(), relu,
                            _out = out._spv.get()](){
             _p1->grad += (relu > 0.0) * _out->grad;
+        };
+
+        out._forward() = [_p1  = _spv.get(),
+                          _out = out._spv.get()](){
+            _out->data = (_p1->data < 0.0)? 0.0 : _p1->data;
         };
         return out;
     }
