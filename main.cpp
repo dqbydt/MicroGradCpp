@@ -7,6 +7,9 @@
 #include "nn.h"
 #include "misc.h"
 
+void dynamic_demo(const MLP &mlp, std::span<double> ys, const auto &xs);
+void static_demo (const MLP &mlp, std::span<double> ys, auto&& xs_Vals);
+
 int main()
 {
 
@@ -107,18 +110,38 @@ int main()
         }
     }
 
+    // Uncomment one of the two below:
+    // ------------------------------
+    // Static: Freezes the graph built during first dummy fwd pass and
+    // uses that in subsequent iterations.
+    // Note: xs_Vals gets consumed in this function!
+    static_demo(mlp, ys, std::move(xs_Vals));
+
+    // Dynamic: Builds a new graph in each fwd pass. Only param nodes
+    // are retained.
+    //dynamic_demo(mlp, ys, xs);
+
+    return 0;
+}
+
+
+// static_demo: freezes the graph built during first dummy fwd pass and
+// uses that in subsequent iterations.
+// Note: xs_Vals auto&& since we need to move out of it
+void static_demo(const MLP& mlp, std::span<double> ys, auto&& xs_Vals)
+{
     // MLP output for each input is a vector<Value> (one Value corresponding
     // to each output Neuron). For a set of inputs, the output is a
     // vector<vector<Value>>. We are picking out the 0th element for our
     // single-output MLP(4,4,1), so ypred is a vector<Value>.
     auto ypred = xs_Vals
-                 | std::views::transform([&](auto& x){ return std::move(mlp(std::move(x))[0]); })
+                 | std::views::transform([&](auto&& x){ return std::move(mlp(std::move(x))[0]); })
                  | std::ranges::to<std::vector>();
 
     // Data view of ypred vector. Because ypred gets baked into the yloss,
     // which gets baked into the loss, which is the root of the static expression
-    // graph the Value nodes corresponding to ypred continue to stay alive
-    // and can be read in every training epoch.
+    // graph, the Value nodes corresponding to ypred continue to stay alive
+    // and get updated, and can be read in every training epoch.
     auto ypred_datav = ypred | std::views::transform([](const auto& v) { return v.data();} );
 
     // Calculate the square loss (this is still a lazy view, note!)
@@ -162,8 +185,74 @@ int main()
 
         // Note the double colon format spec! Reqd because you need to use a colon
         // for the range, then a colon for the elements
-        std::println("Epoch {:3}: loss = {:.3f}, ypred: {::.3f}", i, loss.data(), ypred_datav);
+        std::println("ST Epoch {:3}: loss = {:.3f}, ypred: {::.3f}", i, loss.data(), ypred_datav);
     }
 
-    return 0;
+}
+
+
+// dynamic_demo: Builds a new graph in each fwd pass. Only param nodes are
+// retained.
+// Note: Here we don't need to bake static Value nodes into the graph, so
+// we just take the xs vec<vec> by const lref.
+void dynamic_demo(const MLP& mlp, std::span<double> ys, const auto& xs)
+{
+    std::vector<Value> ypred;
+    Value loss;
+
+    for (auto i : py::range(20)) {
+
+        // 1. Forward pass:
+        // ----------------
+        // MLP output for each input is a vector<Value> (one Value corresponding
+        // to each output Neuron). For a set of inputs, the output is a
+        // vector<vector<Value>>. We are picking out the 0th element for our
+        // single-output MLP(4,4,1), so ypred is a vector<Value>.
+        ypred = xs
+                | std::views::transform([&](auto& x){ return std::move(mlp(x)[0]); })
+                | std::ranges::to<std::vector>();
+
+        // Data view of ypred vector. Because ypred gets baked into the yloss,
+        // which gets baked into the loss, which is the root of the static expression
+        // graph, the Value nodes corresponding to ypred continue to stay alive
+        // and get updated, and can be read in every training epoch.
+        auto ypred_datav = ypred | std::views::transform([](const auto& v) { return v.data();} );
+
+        // Calculate the square loss (this is still a lazy view, note!)
+        // Also note, this fails to compile unless you have an auto& on the
+        // yout, bc copies have been disabled on the Value class.
+        auto yloss = std::views::zip_transform(
+            [](const auto ygt, const auto& yout){ return misc::sqr(yout-ygt); },
+            ys,
+            ypred);
+
+        // Finally collapse yloss into the total scalar loss. This "loss" Value
+        // object carries the entire history of the forward pass.
+        loss = std::ranges::fold_left(yloss, Value{0.0}, std::plus<>{});
+
+        // 2. Reset grads
+        // --------------
+        // When we build the graph anew every time, only the params stay constant,
+        // and all intermediate nodes are created anew (with grads zeroed at
+        // construction). So we just need to zero out the param grads before doing
+        // the backward pass.
+        for (const auto& p : mlp.parameters()) {
+            p.grad() = 0.0;
+        }
+
+        // 3. Backward pass:
+        // ------------------
+        loss.backward();
+
+        // 4. Param update:
+        // ----------------
+        for (const auto& p : mlp.parameters()) {
+            p.data() += -0.1*p.grad();
+        }
+
+        // Note the double colon format spec! Reqd because you need to use a colon
+        // for the range, then a colon for the elements
+        std::println("DY Epoch {:3}: loss = {:.3f}, ypred: {::.3f}", i, loss.data(), ypred_datav);
+    }
+
 }
