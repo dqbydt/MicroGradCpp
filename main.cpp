@@ -157,10 +157,13 @@ void static_demo(const MLP& mlp, std::span<double> ys, auto&& xs_Vals)
     Value loss = std::ranges::fold_left(yloss, Value{0.0}, std::plus<>{});
     std::println("init_loss = {}", loss);
 
+    double last_loss = std::numeric_limits<double>::max();
+    double loss_eps  = 1e-4;
+
     Value& static_graph = loss; // Alias for semantics
     static_graph.compile();
 
-    for (auto i : py::range(20)) {
+    for (auto epoch : py::range(2000)) {
 
         // 1. Forward pass:
         // ----------------
@@ -185,7 +188,21 @@ void static_demo(const MLP& mlp, std::span<double> ys, auto&& xs_Vals)
 
         // Note the double colon format spec! Reqd because you need to use a colon
         // for the range, then a colon for the elements
-        std::println("ST Epoch {:3}: loss = {:.3f}, ypred: {::.3f}", i, loss.data(), ypred_datav);
+        std::println("ST Epoch {:3}: loss = {:.3f}, ypred: {::.3f}", epoch, loss.data(), ypred_datav);
+
+        // 5. Convergence + stall checks
+        // -----------------------------
+        if (loss.data() < loss_eps) {
+            std::println("Converged at epoch {}!", epoch);
+            break;
+        }
+
+        if (std::abs(last_loss - loss.data()) < 1e-7) {
+            std::println("Loss stalled. Stopping.");
+            break;
+        }
+
+        last_loss = loss.data();
     }
 
 }
@@ -199,8 +216,10 @@ void dynamic_demo(const MLP& mlp, std::span<double> ys, const auto& xs)
 {
     std::vector<Value> ypred;
     Value loss;
+    double last_loss = std::numeric_limits<double>::max();
+    double loss_eps  = 1e-3;
 
-    for (auto i : py::range(20)) {
+    for (auto epoch : py::range(2000)) {
 
         // 1. Forward pass:
         // ----------------
@@ -252,7 +271,21 @@ void dynamic_demo(const MLP& mlp, std::span<double> ys, const auto& xs)
 
         // Note the double colon format spec! Reqd because you need to use a colon
         // for the range, then a colon for the elements
-        std::println("DY Epoch {:3}: loss = {:.3f}, ypred: {::.3f}", i, loss.data(), ypred_datav);
+        std::println("DY Epoch {:3}: loss = {:.3f}, ypred: {::.3f}", epoch, loss.data(), ypred_datav);
+
+        // 5. Convergence + stall checks
+        // -----------------------------
+        if (loss.data() < loss_eps) {
+            std::println("Converged at epoch {}!", epoch);
+            break;
+        }
+
+        if (std::abs(last_loss - loss.data()) < 1e-7) {
+            std::println("Loss stalled. Stopping.");
+            break;
+        }
+
+        last_loss = loss.data();
     }
 
 }
